@@ -1,0 +1,19 @@
+# Configuracion de Streamlit segura para commitear (sin secretos).
+# NOTA: no fijamos server.address aqui. En la nube lo gestiona Streamlit Cloud;
+# en local el bind a 127.0.0.1 se pasa por flag (ver start.bat / DEPLOY.md).
+
+[client]
+# Seguridad: NO mostrar tracebacks/errores detallados al usuario (evita filtrar
+# rutas, consultas o estructura interna si salta una excepción). Para depurar en
+# local puedes lanzar con: streamlit run ... --client.showErrorDetails=true
+showErrorDetails = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "dark"
+primaryColor = "#10b981"
+backgroundColor = "#0b0f14"
+secondaryBackgroundColor = "#121821"
+textColor = "#e7ebf2"
