@@ -1,0 +1,59 @@
+name: refresh-data
+
+# Refresco programado de datos hacia la BD en la nube. La app lee siempre lo
+# ultimo de la BD, asi que NO se toca el repositorio (sin commits automaticos).
+#
+# Requisito: secret DB_URL en GitHub -> Settings -> Secrets -> Actions. Usa una
+# conexion en modo sesion (puerto 5432), no el pooler de transacciones, porque
+# el refresco hace TRUNCATE e ingestas grandes.
+
+on:
+  schedule:
+    # 23:00 UTC ~ 00:00 en Espana (invierno). GitHub solo admite UTC; ajusta si
+    # la quieres exacta todo el ano (horario de verano la mueve 1h).
+    - cron: "0 23 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read   # minimo privilegio: el token de Actions no puede escribir
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90   # tope de seguridad (p. ej. si nba_api se cuelga)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # no dejar el token en la config de git
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias del pipeline
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scipy sqlalchemy psycopg2-binary \
+            python-dotenv joblib requests beautifulsoup4 lxml nba_api
+
+      - name: Refrescar datos
+        env:
+          DATABASE_URL: ${{ secrets.DB_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Falta el secret DB_URL"; exit 1
+          fi
+          python scripts/refresh_cloud.py
+
+      # Monitor de deriva: mide la salud del modelo con los partidos recientes ya
+      # cerrados y sella app_meta['model_health']. Best-effort: nunca rompe el refresco.
+      - name: Monitor de deriva del modelo
+        if: always()
+        continue-on-error: true
+        env:
+          DATABASE_URL: ${{ secrets.DB_URL }}
+        run: python scripts/monitor_drift.py
