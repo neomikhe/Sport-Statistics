@@ -25,6 +25,7 @@ from app.ui import (inject_theme, page_header, brand_logo,  # noqa: E402
                     browser_tz, local_hm, skeleton_rows, sidebar_nav)
 from app import charts  # noqa: E402
 from core.fixtures import todays_fixtures  # noqa: E402
+from core.fixtures.football import has_token as football_has_token  # noqa: E402
 from core.fixtures.match import attach_entity_ids  # noqa: E402
 from core.matchup import predict  # noqa: E402
 from core.predictions import top_situations  # noqa: E402
@@ -87,13 +88,21 @@ def _status_label(status):
 
 
 if not fixtures:
-    if sport == "football":
+    if sport == "football" and not football_has_token():
+        # Caso 1: falta la clave -> no podemos consultar nada.
         empty_state("API de fútbol no configurada",
-                     "Agrega tu clave <b>football_data_token</b> (gratis en football-data.org) "
-                     "en los Secrets para ver los partidos y predicciones.")
+                    "Agrega tu clave <b>football_data_token</b> (gratis en football-data.org) "
+                    "en los Secrets para ver los partidos y predicciones.")
+    elif sport == "football":
+        # Caso 2: la clave SÍ está, pero ese día no hay partidos (p. ej. parón de verano).
+        empty_state("Sin partidos de fútbol este día",
+                    f"La API está configurada correctamente, pero no hay partidos "
+                    f"programados el <b>{day.strftime('%d/%m/%Y')}</b> en las competiciones "
+                    "del plan gratuito. Prueba con otra fecha.")
     else:
-        empty_state("Sin partidos de MLB hoy",
-                     "No hay partidos programados en MLB para la fecha seleccionada.")
+        empty_state("Sin partidos de MLB este día",
+                    f"No hay partidos programados en MLB el "
+                    f"<b>{day.strftime('%d/%m/%Y')}</b>. Prueba con otra fecha.")
     st.stop()
 
 
