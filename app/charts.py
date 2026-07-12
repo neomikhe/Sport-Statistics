@@ -18,6 +18,12 @@ ACCENT = {
     "baseball": "#5f8fa8",
     "tennis": "#b3985c",
 }
+ACCENT_RGB = {
+    "football": "92, 154, 133",
+    "basketball": "189, 133, 96",
+    "baseball": "95, 143, 168",
+    "tennis": "179, 152, 92",
+}
 
 _FONT = "IBM Plex Sans, system-ui, sans-serif"
 _GRID = "rgba(255,255,255,0.05)"
@@ -73,7 +79,7 @@ def _layout(height: int, **extra):
 
 
 def _show(fig) -> None:
-    st.plotly_chart(fig, use_container_width=True, config=_NO_BAR)
+    st.plotly_chart(fig, width="stretch", config=_NO_BAR)
 
 
 def trend(df, x_col, for_col, against_col, for_label, against_label, accent):

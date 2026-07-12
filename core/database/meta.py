@@ -5,6 +5,9 @@ La usan el pipeline (last_refresh, refresh_status), el re-entrenamiento
 (last_retrain, retrain_report) y el monitor de deriva (model_health). La app la
 lee para mostrar estado y avisos. Todo best-effort: nunca rompe si no hay BD.
 """
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 def stamp_meta(key: str, value: str) -> bool:
@@ -23,7 +26,7 @@ def stamp_meta(key: str, value: str) -> bool:
         con.close()
         return True
     except Exception as e:
-        print(f"[aviso] no se pudo sellar app_meta['{key}']: {e}")
+        _log.warning("no se pudo sellar app_meta['%s']: %s", key, e)
         return False
 
 

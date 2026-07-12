@@ -39,6 +39,13 @@ COL_VISITING_TEAM = 3
 COL_HOME_TEAM = 6
 COL_VISITING_SCORE = 9
 COL_HOME_SCORE = 10
+# Estadísticas ofensivas por equipo (verificadas contra gl2023: hits~8.5, HR~1.2, K~9).
+COL_VISITING_HITS = 22
+COL_VISITING_HR = 25
+COL_VISITING_SO = 32
+COL_HOME_HITS = 50
+COL_HOME_HR = 53
+COL_HOME_SO = 60
 
 
 def _get_sport_id(conn) -> int:
@@ -91,10 +98,19 @@ def ingest_year(conn, sport_id: int, year: int) -> int:
     df["h_score"] = pd.to_numeric(df[COL_HOME_SCORE], errors="coerce")
     df = df.dropna(subset=["v_score", "h_score"])
 
+    # Estadísticas extra (hits/HR/ponches). Presentes si el log trae las 161 columnas.
+    has_stats = df.shape[1] > COL_HOME_SO
+    for col in (COL_VISITING_HITS, COL_VISITING_HR, COL_VISITING_SO,
+                COL_HOME_HITS, COL_HOME_HR, COL_HOME_SO):
+        df[f"n{col}"] = pd.to_numeric(df[col], errors="coerce") if has_stats else None
+
     # Upsert equipos (visitor + home)
     teams_seen = set(df[COL_VISITING_TEAM].dropna().unique()) | set(df[COL_HOME_TEAM].dropna().unique())
     team_map = {abbr: _upsert_team(conn, sport_id, abbr) for abbr in teams_seen}
     conn.commit()
+
+    def _si(v):
+        return None if pd.isna(v) else int(v)
 
     rows = []
     for _, r in df.iterrows():
@@ -109,6 +125,9 @@ def ingest_year(conn, sport_id: int, year: int) -> int:
             None, None,  # home_sp_id, away_sp_id (pendiente lineups)
             int(r["h_score"]),
             int(r["v_score"]),
+            _si(r[f"n{COL_HOME_HITS}"]), _si(r[f"n{COL_VISITING_HITS}"]),
+            _si(r[f"n{COL_HOME_HR}"]),   _si(r[f"n{COL_VISITING_HR}"]),
+            _si(r[f"n{COL_HOME_SO}"]),   _si(r[f"n{COL_VISITING_SO}"]),
             None,  # park_factor
             None,  # weather
         ))
@@ -117,14 +136,24 @@ def ingest_year(conn, sport_id: int, year: int) -> int:
         return 0
 
     with conn.cursor() as cur:
+        # DO UPDATE (no DO NOTHING): una re-ingesta rellena hits/HR/ponches en los
+        # partidos que ya existían. COALESCE evita pisar un valor con NULL.
         execute_values(
             cur,
             """
             INSERT INTO baseball_games
                 (date, home_team_id, away_team_id, home_sp_id, away_sp_id,
-                 home_runs, away_runs, park_factor, weather)
+                 home_runs, away_runs,
+                 home_hits, away_hits, home_hr, away_hr, home_so, away_so,
+                 park_factor, weather)
             VALUES %s
-            ON CONFLICT (date, home_team_id, away_team_id) DO NOTHING
+            ON CONFLICT (date, home_team_id, away_team_id) DO UPDATE SET
+                home_hits = COALESCE(EXCLUDED.home_hits, baseball_games.home_hits),
+                away_hits = COALESCE(EXCLUDED.away_hits, baseball_games.away_hits),
+                home_hr   = COALESCE(EXCLUDED.home_hr,   baseball_games.home_hr),
+                away_hr   = COALESCE(EXCLUDED.away_hr,   baseball_games.away_hr),
+                home_so   = COALESCE(EXCLUDED.home_so,   baseball_games.home_so),
+                away_so   = COALESCE(EXCLUDED.away_so,   baseball_games.away_so)
             """,
             rows,
         )

@@ -162,6 +162,12 @@ def load_csv(conn, csv_path, league_code, season_code):
             _safe_int(r.get("FTAG")),
             None,  # home_xg (football-data.co.uk no incluye xG)
             None,  # away_xg
+            _safe_int(r.get("HC")),   # córners local
+            _safe_int(r.get("AC")),   # córners visitante
+            _safe_int(r.get("HY")),   # amarillas local
+            _safe_int(r.get("AY")),   # amarillas visitante
+            _safe_int(r.get("HR")),   # rojas local
+            _safe_int(r.get("AR")),   # rojas visitante
             _safe_odds(r, ["PSCH", "PSH"]),
             _safe_odds(r, ["PSCD", "PSD"]),
             _safe_odds(r, ["PSCA", "PSA"]),
@@ -174,16 +180,27 @@ def load_csv(conn, csv_path, league_code, season_code):
         return 0
 
     with conn.cursor() as cur:
+        # DO UPDATE (no DO NOTHING): así una re-ingesta rellena córners/tarjetas
+        # en los partidos que ya existían sin ese dato. COALESCE evita pisar un
+        # valor existente con NULL si un CSV no trae la columna.
         execute_values(
             cur,
             """
             INSERT INTO football_matches
                 (date, league, season, home_team_id, away_team_id,
                  home_goals, away_goals, home_xg, away_xg,
+                 home_corners, away_corners, home_yellows, away_yellows,
+                 home_reds, away_reds,
                  odds_home_close, odds_draw_close, odds_away_close,
                  odds_o25_close, odds_u25_close, source)
             VALUES %s
-            ON CONFLICT (date, home_team_id, away_team_id) DO NOTHING
+            ON CONFLICT (date, home_team_id, away_team_id) DO UPDATE SET
+                home_corners = COALESCE(EXCLUDED.home_corners, football_matches.home_corners),
+                away_corners = COALESCE(EXCLUDED.away_corners, football_matches.away_corners),
+                home_yellows = COALESCE(EXCLUDED.home_yellows, football_matches.home_yellows),
+                away_yellows = COALESCE(EXCLUDED.away_yellows, football_matches.away_yellows),
+                home_reds    = COALESCE(EXCLUDED.home_reds,    football_matches.home_reds),
+                away_reds    = COALESCE(EXCLUDED.away_reds,    football_matches.away_reds)
             """,
             rows,
         )

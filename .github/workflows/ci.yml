@@ -36,3 +36,11 @@ jobs:
 
       - name: Tests
         run: python -m pytest -q
+
+      # Auditoría de vulnerabilidades de dependencias (informativa: no bloquea el
+      # merge si aparece un CVE transitivo sin parche, pero lo deja visible en el log).
+      - name: Auditoría de dependencias (pip-audit)
+        continue-on-error: true
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --desc on

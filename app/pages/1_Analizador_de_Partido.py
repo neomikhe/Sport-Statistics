@@ -11,6 +11,7 @@ reales basadas en los modelos entrenados:
 Ejecutar:
     streamlit run app/streamlit_app.py
 """
+import html
 import sys
 from pathlib import Path
 
@@ -24,29 +25,38 @@ sys.path.insert(0, str(ROOT))
 
 from core.database.connection import get_sqlalchemy_engine  # noqa: E402
 from app.auth import require_password  # noqa: E402
-from app.ui import inject_theme, matchup_header, section_header  # noqa: E402
+from app.ui import (inject_theme, matchup_header, section_header,  # noqa: E402
+                    page_header, brand_logo, onboarding_banner, sidebar_nav)
 from app import charts  # noqa: E402
 from core.ai import gemini as _gemini  # noqa: E402
 from core.ai import adjust as _adjust  # noqa: E402
 
-st.set_page_config(page_title="Analizador", page_icon=":material/query_stats:", layout="wide")
+_FAV = str(ROOT / "app" / "assets" / "favicon.png")
+st.set_page_config(page_title="Analizador", page_icon=_FAV, layout="wide")
 require_password()
 
 # ---------- Sidebar ----------
+st.sidebar.markdown(f"<div style='padding:6px 2px 10px;'>{brand_logo(scale=0.95)}</div>",
+                    unsafe_allow_html=True)
+sidebar_nav()
+st.sidebar.markdown("<hr style='margin:12px 0'>"
+                    "<div style='color:var(--muted);font-size:.7rem;text-transform:uppercase;"
+                    "letter-spacing:.06em;margin-bottom:6px;'>Deporte</div>",
+                    unsafe_allow_html=True)
 sport_label = st.sidebar.radio(
     "Deporte",
     ["Fútbol", "Baloncesto", "Béisbol", "Tenis"],
     index=0,
+    label_visibility="collapsed",
 )
 
 # Inyecta el tema visual dinámico del deporte
 inject_theme(sport_label)
 
-st.title("Analizador de partido")
-st.caption(
-    "Selecciona un deporte y dos equipos/jugadores para ver "
-    "probabilidades de cada mercado disponible."
-)
+page_header("Analizador de partido",
+            "Elige un deporte y dos contendientes para ver la probabilidad de cada mercado.",
+            "search")
+onboarding_banner()
 
 def _render_comparison_bar(title, home_val, away_val, format_str="{:.1f}", suffix="", color="#5c9a85"):
     total = home_val + away_val
@@ -186,7 +196,7 @@ def _render_team_detail(col, name, team_id, elo, stats):
         charts.trend(recent, "Fecha", "GF", "GA",
                      "Goles a favor", "Goles en contra", charts.ACCENT["football"])
         tbl = recent.iloc[::-1][["Fecha", "Rival", "Marcador", "Res"]].head(6)
-        st.dataframe(tbl, hide_index=True, use_container_width=True)
+        st.dataframe(tbl, hide_index=True, width="stretch")
 
 
 # ============================================================
@@ -244,13 +254,50 @@ def _render_top_gauge(markets, accent):
         charts.gauge(top[0]["prob"], accent, label=top[0]["mercado"])
 
 
-def _render_markets_section(markets, partido, accent="#5c9a85"):
-    """Top 3 mercados + tabla completa + picks premium 70–99% (deporte-agnóstico)."""
-    from core.markets import premium_picks, top_markets
+def _render_top_situations(markets, accent, n=10):
+    """Lista visual de las N situaciones más probables (estilo 365scores)."""
+    from core.predictions import top_situations
 
-    section_header("3 mercados más probables", "trophy")
-    for col, mk in zip(st.columns(3), top_markets(markets, n=3)):
-        col.metric(mk["mercado"], f"{mk['prob']*100:.1f} %", help=mk["grupo"])
+    sits = top_situations(markets, n=n)
+    section_header(f"{len(sits)} situaciones más probables", "star")
+    if not sits:
+        st.caption("Sin situaciones para mostrar.")
+        return
+    rows = ""
+    for i, m in enumerate(sits, 1):
+        pct = m["prob"] * 100
+        rows += (
+            "<div style=\"display:flex;align-items:center;gap:12px;padding:9px 2px;"
+            "border-bottom:1px solid rgba(255,255,255,0.05);\">"
+            f"<div style=\"width:23px;height:23px;flex:none;display:flex;align-items:center;"
+            f"justify-content:center;border-radius:6px;background:rgba(var(--accent-rgb),0.12);"
+            f"color:{accent};font-family:'IBM Plex Mono',monospace;"
+            f"font-weight:600;font-size:12px;\">{i}</div>"
+            "<div style=\"flex:1.4;min-width:0;\">"
+            f"<div style=\"color:#e6eaf0;font-size:14px;font-weight:500;line-height:1.3;\">"
+            f"{html.escape(str(m['mercado']))}</div>"
+            f"<div style=\"color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;\">"
+            f"{html.escape(str(m.get('grupo', '')))}</div></div>"
+            f"<div role=\"progressbar\" aria-valuenow=\"{pct:.0f}\" aria-valuemin=\"0\" aria-valuemax=\"100\" "
+            "style=\"position:relative;flex:0.9;height:6px;background:rgba(255,255,255,0.06);border-radius:99px;\">"
+            f"<div style=\"width:{pct:.0f}%;height:100%;background:{accent};border-radius:99px;\"></div>"
+            "<div title=\"50%\" style=\"position:absolute;left:50%;top:-2px;width:1px;height:10px;"
+            "background:rgba(255,255,255,0.22);\"></div></div>"
+            f"<div style=\"width:54px;text-align:right;font-family:'IBM Plex Mono',monospace;"
+            f"font-weight:600;color:#fff;font-size:14px;\">{pct:.1f}%</div></div>"
+        )
+    st.markdown(
+        f"<div style=\"background:var(--card);border:1px solid var(--border);"
+        f"border-radius:12px;padding:6px 16px;\">{rows}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_markets_section(markets, partido, accent="#5c9a85"):
+    """Top 10 situaciones + tabla completa + picks premium 70–99% (deporte-agnóstico)."""
+    from core.markets import premium_picks
+
+    _render_top_situations(markets, accent)
     _render_top_gauge(markets, accent)
 
     section_header("Todos los mercados", "list")
@@ -260,7 +307,7 @@ def _render_markets_section(markets, partido, accent="#5c9a85"):
     df["Prob."] = (df["prob"] * 100).map("{:.1f} %".format)
     st.dataframe(
         df.rename(columns={"grupo": "Grupo"})[["Grupo", "Mercado", "Prob."]],
-        hide_index=True, use_container_width=True, height=340,
+        hide_index=True, width="stretch", height=340,
     )
 
     section_header("Picks premium (70%–99%)", "star")
@@ -268,7 +315,7 @@ def _render_markets_section(markets, partido, accent="#5c9a85"):
     if prem:
         dfp = pd.DataFrame([{"Partido": partido, "Pick": x["mercado"],
                              "Probabilidad": f"{x['prob']*100:.1f} %"} for x in prem])
-        st.dataframe(dfp, hide_index=True, use_container_width=True)
+        st.dataframe(dfp, hide_index=True, width="stretch")
     else:
         st.info("Ningún mercado cae en 70%–99%: enfrentamiento parejo, no se fuerzan picks.")
 
@@ -322,7 +369,7 @@ def _render_score_panel(col, name, elo, recent, for_label, against_label,
         m3.metric("En contra (med.)", f"{recent['C'].mean():.1f}")
         charts.trend(recent, "Fecha", "F", "C", for_label, against_label, accent)
         st.dataframe(recent.iloc[::-1][["Fecha", "Rival", "Marcador", "Res"]].head(6),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
 
 
 def _tennis_recent(player_id, n=10):
@@ -370,7 +417,7 @@ def _render_tennis_detail(p1_id, p1_name, p2_id, p2_name):
                 Rival=rec["rival"].str.slice(0, 16),
             ).rename(columns={"surface": "Sup.", "score": "Marcador"})
             st.dataframe(tbl[["Fecha", "Rival", "Sup.", "Marcador", "Res"]].head(6),
-                         hide_index=True, use_container_width=True)
+                         hide_index=True, width="stretch")
 
 
 # ============================================================
@@ -467,7 +514,7 @@ def _render_market_comparison(ph, pdr, pa, home_name, away_name):
                 "EV @cuota": f"{ev*100:+.1f}%",
                 "Kelly ¼": f"{f*100:.1f}%",
             })
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
         st.caption(
             "**Realidad medida (OOS 2024-25):** la línea de cierre es MÁS acertada que el "
             "modelo (log-loss 0.98 vs 1.01) y apostar los 'edges' del modelo dio **−12.8% ROI**. "
@@ -521,7 +568,7 @@ def show_football():
         return
 
     from sports.football.markets import (
-        all_markets, top_markets, premium_picks, top_scorelines as top_scores
+        all_markets, premium_picks, top_scorelines as top_scores
     )
 
     model_path = ROOT / "data" / "models" / "football_poisson_v1.joblib"
@@ -564,6 +611,12 @@ def show_football():
 
     RHO = -0.10  # Dixon-Coles (spec ρ≈-0.10): mejora la calibración de marcadores bajos
     markets = all_markets(lh, la, rho=RHO)   # Dixon-Coles es instantáneo (ya cubierto por el spinner)
+    # Córners y tarjetas (modelo Poisson aparte). [] si aún no hay dato re-ingestado.
+    from core.football_stats import stats_markets_for
+    markets = markets + stats_markets_for(engine, home_id, away_id)
+    # Feedback empírico del historial a los eventos (conservador; no-op sin historial).
+    from core.history.calibration import apply_corrections
+    markets = apply_corrections(markets, "football", engine)
 
     def pget(mercado):
         return next(x["prob"] for x in markets if x["mercado"] == mercado)
@@ -584,9 +637,7 @@ def show_football():
     c3.metric("λ goles local", f"{lh:.2f}")
     c4.metric("λ goles visit", f"{la:.2f}")
 
-    section_header("3 mercados más probables", "trophy")
-    for col, mk in zip(st.columns(3), top_markets(markets, n=3)):
-        col.metric(mk["mercado"], f"{mk['prob']*100:.1f} %", help=mk["grupo"])
+    _render_top_situations(markets, charts.ACCENT["football"])
     _render_top_gauge(markets, charts.ACCENT["football"])
 
     section_header("Resultado 1X2", "medal")
@@ -614,7 +665,7 @@ def show_football():
     df_mk["Prob."] = (df_mk["prob"] * 100).map("{:.1f} %".format)
     st.dataframe(
         df_mk.rename(columns={"grupo": "Grupo"})[["Grupo", "Mercado", "Prob."]],
-        hide_index=True, use_container_width=True, height=380,
+        hide_index=True, width="stretch", height=380,
     )
 
     section_header("Picks premium (70%–99%)", "star")
@@ -624,7 +675,7 @@ def show_football():
             {"Partido": f"{home_name} vs {away_name}", "Pick": x["mercado"],
              "Probabilidad": f"{x['prob']*100:.1f} %"} for x in prem
         ])
-        st.dataframe(df_prem, hide_index=True, use_container_width=True)
+        st.dataframe(df_prem, hide_index=True, width="stretch")
     else:
         st.info("Ningún mercado cae en 70%–99%: partido parejo, no se fuerzan picks.")
 
@@ -633,7 +684,7 @@ def show_football():
     df_top = pd.DataFrame([{"Marcador": f"{h} - {a}", "_p": p} for h, a, p in top])
     df_top["Probabilidad"] = (df_top["_p"] * 100).map("{:.2f} %".format)
     cc1, cc2 = st.columns(2)
-    cc1.dataframe(df_top[["Marcador", "Probabilidad"]], hide_index=True, use_container_width=True)
+    cc1.dataframe(df_top[["Marcador", "Probabilidad"]], hide_index=True, width="stretch")
     with cc2:
         charts.bars(df_top["Marcador"].tolist(), df_top["_p"].tolist(),
                     charts.ACCENT["football"], height=320, horizontal=True, pct=True)
@@ -868,6 +919,10 @@ def show_tennis():
 
     with st.spinner("Calculando probabilidades…"):
         markets = all_markets(p_set, best_of=int(best_of), name_a=p1_name, name_b=p2_name)
+        # Aces y dobles faltas (modelo Poisson por superficie). [] si no hay dato.
+        from core.tennis_stats import stats_markets_for as _tennis_stats
+        markets = markets + _tennis_stats(engine, p1_id, p2_id, surface, p1_name, p2_name,
+                                          best_of=int(best_of))
     partido = f"{p1_name} vs {p2_name} ({surface}, BO{best_of})"
 
     # Calibración del display de prob. de ganar (los mercados siguen sobre p_set crudo).
@@ -1020,6 +1075,23 @@ def show_baseball():
     e_home_runs = max(0.5, h_rs * a_ra / league_rpg * 1.03)   # leve ventaja local
     e_away_runs = max(0.5, a_rs * h_ra / league_rpg)
 
+    # Ajuste por abridor probable SI estos dos equipos juegan hoy (mlb_starters).
+    from datetime import date as _today_date
+    from sports.baseball.starter_adjustment import adjust_runs, lookup_starter_fips
+    _hf, _af = lookup_starter_fips(engine, home_id, away_id, _today_date.today())
+    _starter_note = None
+    if _hf is not None or _af is not None:
+        e_home_runs, e_away_runs = adjust_runs(e_home_runs, e_away_runs, _hf, _af)
+        _starter_note = ("Carreras ajustadas por abridor probable de hoy (FIP): local "
+                         f"{f'{_hf:.2f}' if _hf else 's/d'} · visitante "
+                         f"{f'{_af:.2f}' if _af else 's/d'}.")
+
+    # Park factor del estadio local (ambiente de carreras).
+    from sports.baseball.park_factors import park_factor
+    _pf = park_factor(home_name)
+    if _pf != 1.0:
+        e_home_runs, e_away_runs = e_home_runs * _pf, e_away_runs * _pf
+
     if use_ai:
         ctx = _ai_context(home_name, away_name, "baseball")
         if ctx:
@@ -1033,6 +1105,12 @@ def show_baseball():
 
     with st.spinner("Simulando 20.000 partidos (Monte Carlo)…"):
         markets = all_markets(e_home_runs, e_away_runs, rng=np.random.default_rng(42))
+        # Hits, jonrones y ponches (modelo Poisson aparte). [] si no hay dato re-ingestado.
+        from core.baseball_stats import stats_markets_for as _bb_stats
+        markets = markets + _bb_stats(engine, home_id, away_id)
+        # Feedback empírico del historial a los eventos (conservador; no-op sin historial).
+        from core.history.calibration import apply_corrections
+        markets = apply_corrections(markets, "baseball", engine)
     partido = f"{home_name} vs {away_name}"
 
     st.markdown(f"### {home_name} (local) vs {away_name}")
@@ -1043,7 +1121,9 @@ def show_baseball():
     # Renderizamos las barras comparativas
     _render_comparison_bar("Rating ELO", home_elo, away_elo, format_str="{:.0f}", color="#5f8fa8")
     _render_comparison_bar("Carreras Esperadas", e_home_runs, e_away_runs, format_str="{:.2f}", color="#5f8fa8")
-    
+    if _starter_note:
+        st.caption(_starter_note)
+
     section_header("Métricas del Modelo", "activity")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Elo local", f"{home_elo:.0f}")

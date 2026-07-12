@@ -54,32 +54,72 @@ def require_password() -> None:
     st.stop()
 
 
+_LOGIN_CSS = """
+<style>
+[data-testid='stSidebar']{display:none;}
+[data-testid='stAppViewContainer']{
+  background:
+    radial-gradient(120% 80% at 50% 120%, rgba(92,154,133,0.06), transparent 60%),
+    radial-gradient(circle at 50% 100%, rgba(255,255,255,0.025) 0.5px, transparent 0.6px) 0 0/22px 22px,
+    #0a0d13 !important;
+}
+/* La tarjeta de login = el formulario */
+[data-testid='stForm']{
+  background:#131923 !important; border:1px solid rgba(255,255,255,0.08) !important;
+  border-radius:16px !important; padding:30px 30px 26px !important;
+  box-shadow:0 24px 70px rgba(0,0,0,0.45) !important;
+}
+[data-testid='stForm'] [data-testid='stTextInput'] label{
+  text-transform:uppercase; letter-spacing:.08em; font-size:.7rem; color:var(--muted);
+}
+[data-testid='stFormSubmitButton'] button{
+  background:rgba(92,154,133,0.14) !important; border:1px solid rgba(92,154,133,0.40) !important;
+  color:#eafff4 !important; padding:11px 18px !important; margin-top:4px;
+}
+[data-testid='stFormSubmitButton'] button:hover{
+  background:rgba(92,154,133,0.24) !important; border-color:#5c9a85 !important;
+}
+</style>
+"""
+
+_LOGIN_ERROR = (
+    "<div style='display:flex;align-items:center;gap:7px;margin:2px 0 6px;color:#d98c8c;"
+    "font-size:.82rem;'>"
+    "<svg width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='currentColor' "
+    "stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='flex:none'>"
+    "<circle cx='12' cy='12' r='10'/><line x1='12' x2='12' y1='8' y2='12'/>"
+    "<line x1='12' x2='12.01' y1='16' y2='16'/></svg>"
+    "<span>Clave incorrecta</span></div>"
+)
+
+
 def _render_login_screen(password: str) -> None:
-    """Pantalla de login dedicada: centrada y sin la navegacion lateral visible."""
-    st.markdown(
-        "<style>[data-testid='stSidebar']{display:none;}</style>",
-        unsafe_allow_html=True,
-    )
+    """Pantalla de login dedicada: tarjeta centrada, con marca (mockup)."""
+    from app.ui import brand_logo
 
-    _, center, _ = st.columns([1, 1.4, 1])
+    st.markdown(_LOGIN_CSS, unsafe_allow_html=True)
+
+    _, center, _ = st.columns([1, 1.3, 1])
     with center:
-        st.markdown("<div style='height:8vh'></div>", unsafe_allow_html=True)
-        st.markdown(
-            "<div style=\"display:flex;align-items:center;gap:11px;"
-            "font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:1.7rem;"
-            "font-weight:600;color:#fff;\">"
-            "<svg width='26' height='26' viewBox='0 0 24 24' fill='none' stroke='#5c9a85' "
-            "stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'>"
-            "<rect width='18' height='11' x='3' y='11' rx='2' ry='2'/>"
-            "<path d='M7 11V7a5 5 0 0 1 10 0v4'/></svg>"
-            "<span>SportStatistics</span></div>",
-            unsafe_allow_html=True,
-        )
-        st.caption("Acceso privado. Introduce la clave para continuar.")
-
+        st.markdown("<div style='height:11vh'></div>", unsafe_allow_html=True)
         with st.form("login_form"):
-            entered = st.text_input("Clave de acceso", type="password")
-            submitted = st.form_submit_button("Entrar", type="primary", use_container_width=True)
+            st.markdown(
+                f"<div style='display:flex;justify-content:center;margin:2px 0 18px;'>"
+                f"{brand_logo(scale=1.6, stacked=True)}</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "<div style='text-align:center;color:var(--muted);font-size:.92rem;"
+                "line-height:1.5;margin-bottom:20px;'>Acceso privado. Introduce la clave "
+                "para continuar.</div>",
+                unsafe_allow_html=True,
+            )
+            entered = st.text_input("Clave", type="password",
+                                    placeholder="••••••••", label_visibility="visible")
+            if st.session_state.get(_FAILS, 0) > 0:
+                st.markdown(_LOGIN_ERROR, unsafe_allow_html=True)
+            submitted = st.form_submit_button("Entrar", type="primary",
+                                              width="stretch")
 
         if submitted:
             if hmac.compare_digest(entered, password):
@@ -91,4 +131,4 @@ def _render_login_screen(password: str) -> None:
                 fails = st.session_state.get(_FAILS, 0) + 1
                 st.session_state[_FAILS] = fails
                 time.sleep(min(fails, MAX_FAIL_DELAY_S))  # retardo escalante
-                st.error("Clave incorrecta.")
+                st.rerun()

@@ -72,3 +72,66 @@ def matchup_adjustment(
     # Re-normalizar: si ambos pitchers son muy buenos, baja el variance pero
     # mantiene el balance home/away. Cap en [0.10, 0.90].
     return max(0.10, min(0.90, home_adj))
+
+
+# ======================================================================
+#  Ajuste a nivel de CARRERAS (para el modelo Monte Carlo de predict_baseball)
+# ======================================================================
+STARTER_SHARE = 0.60   # fracción del juego que lanza el abridor (~6 de 9 entradas)
+
+
+def adjust_runs(e_home_runs: float, e_away_runs: float,
+                home_fip: Optional[float], away_fip: Optional[float],
+                league_fip: float = LEAGUE_AVG_FIP,
+                starter_share: float = STARTER_SHARE):
+    """Ajusta las carreras esperadas por el abridor RIVAL.
+
+    El abridor local enfrenta a los bateadores visitantes -> suprime `e_away_runs`;
+    el abridor visitante suprime `e_home_runs`. El efecto se amortigua por
+    `starter_share`: el abridor lanza ~60% del juego, el resto (bullpen) se asume
+    en la media de liga. Un FIP None (sin dato) deja ese lado sin ajustar.
+    """
+    def blend(fip):
+        if fip is None or fip <= 0:
+            return 1.0
+        ratio = fip / league_fip              # <1 = mejor que la media -> menos carreras
+        return starter_share * ratio + (1.0 - starter_share)
+
+    e_away = max(0.5, e_away_runs * blend(home_fip))   # abridor local vs bateo visitante
+    e_home = max(0.5, e_home_runs * blend(away_fip))   # abridor visitante vs bateo local
+    return e_home, e_away
+
+
+def lookup_starter_fips(engine, home_id: int, away_id: int, game_date):
+    """(home_fip, away_fip) del abridor probable de ese juego. (None, None) si falta.
+
+    Une mlb_starters (por nombre de equipo + fecha) con mlb_pitcher_stats (por
+    pitcher_id, temporada más reciente). Best-effort: si falta cualquier pieza,
+    devuelve None en ese lado y el modelo no ajusta.
+    """
+    import pandas as pd
+
+    q = """
+        SELECT
+          (SELECT fip FROM mlb_pitcher_stats WHERE pitcher_id = s.home_starter_id
+           ORDER BY season DESC LIMIT 1) AS home_fip,
+          (SELECT fip FROM mlb_pitcher_stats WHERE pitcher_id = s.away_starter_id
+           ORDER BY season DESC LIMIT 1) AS away_fip
+        FROM mlb_starters s
+        WHERE s.game_date = %(d)s
+          AND s.home_team = (SELECT name FROM entities WHERE id = %(h)s)
+          AND s.away_team = (SELECT name FROM entities WHERE id = %(a)s)
+        LIMIT 1
+    """
+    try:
+        df = pd.read_sql(q, engine, params={"h": int(home_id), "a": int(away_id),
+                                            "d": str(game_date)})
+    except Exception:
+        return None, None
+    if df.empty:
+        return None, None
+
+    def _f(v):
+        return None if pd.isna(v) else float(v)
+
+    return _f(df["home_fip"].iloc[0]), _f(df["away_fip"].iloc[0])

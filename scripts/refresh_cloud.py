@@ -44,13 +44,6 @@ def _current_season() -> str:
     return f"{start}-{start + 1}"
 
 
-def _nba_seasons() -> list:
-    """Temporadas NBA (previa + actual), formato 'YYYY-YY' (arranca en octubre)."""
-    t = _today()
-    start = t.year if t.month >= 9 else t.year - 1
-    return [f"{y}-{(y + 1) % 100:02d}" for y in (start - 1, start)]
-
-
 def _mlb_years() -> list:
     """Años MLB recientes. Retrosheet publica con retraso → previa + actual."""
     y = _today().year
@@ -76,11 +69,12 @@ SPORTS = [
         ("Construye features", ["scripts/build_football_features.py"]),
         ("Genera picks", ["scripts/generate_football_picks.py", CURRENT_SEASON]),
     ]),
-    ("Baloncesto", [
-        ("Descarga NBA", ["scripts/download_basketball_data.py", *_nba_seasons()]),
-    ]),
+    # NOTA: el baloncesto NO va aquí. nba_api bloquea las IPs de la nube, así que se
+    # refresca EN LOCAL con `python scripts/refresh_nba_local.py` (IP residencial).
     ("Béisbol", [
         ("Descarga MLB", ["scripts/download_retrosheet_data.py", *_mlb_years()]),
+        ("Stats de pitchers (FIP)", ["scripts/fetch_pitcher_stats.py", *_mlb_years()]),
+        ("Abridores probables del día", ["scripts/fetch_mlb_lineups.py"]),
     ]),
     ("Tenis", [
         ("Descarga Sackmann", ["scripts/download_tennis_data.py", *_tennis_years()]),
@@ -90,21 +84,27 @@ SPORTS = [
 ]
 
 SCHEMA_V4 = ROOT / "core" / "database" / "schema_v4_app.sql"
+SCHEMA_HISTORY = ROOT / "core" / "database" / "schema_history.sql"
+SCHEMA_STATS = ROOT / "core" / "database" / "schema_stats.sql"
 
 
 def ensure_schema() -> None:
-    """Crea football_picks y app_meta si no existen (idempotente).
+    """Crea/actualiza football_picks, app_meta, match_predictions y las columnas de
+    córners/tarjetas si no existen (idempotente).
 
     En la nube el rol tiene privilegio CREATE. En local, el usuario puede no
-    tenerlo: en ese caso asumimos que las tablas ya existen (creadas por la
-    migración / por el admin con schema_v4_app.sql) y seguimos.
+    tenerlo: en ese caso asumimos que las tablas ya existen y seguimos.
     """
     con = get_pg_connection()
     try:
         with con.cursor() as cur:
             cur.execute(SCHEMA_V4.read_text(encoding="utf-8"))
+            if SCHEMA_HISTORY.exists():
+                cur.execute(SCHEMA_HISTORY.read_text(encoding="utf-8"))
+            if SCHEMA_STATS.exists():
+                cur.execute(SCHEMA_STATS.read_text(encoding="utf-8"))
         con.commit()
-        print("  schema_v4 verificado/creado")
+        print("  schema (app + historial + córners/tarjetas) verificado/creado")
     except psycopg2.errors.InsufficientPrivilege:
         con.rollback()
         print("  [aviso] sin privilegio CREATE; asumo que las tablas ya existen.")
@@ -187,6 +187,34 @@ def load_picks() -> int:
     return len(picks)
 
 
+def log_todays_fixtures() -> int:
+    """Registra el top-10 de situaciones de los partidos de HOY (MLB + fútbol).
+
+    Idempotente (ON CONFLICT DO NOTHING). Devuelve cuántos partidos se registraron.
+    """
+    from core.fixtures import todays_fixtures
+    from core.fixtures.match import attach_entity_ids
+    from core.matchup import predict
+    from core.predictions import top_situations
+    from core.history.store import log_predictions
+
+    engine = get_sqlalchemy_engine()
+    today = _today()
+    total = 0
+    for sport in ("baseball", "football"):
+        fixtures = attach_entity_ids(engine, sport, todays_fixtures(sport, today))
+        for f in fixtures:
+            if not (f.get("home_id") and f.get("away_id")):
+                continue
+            markets = predict(sport, engine, f["home_id"], f["away_id"], game_date=today)
+            sits = top_situations(markets, 10) if markets else []
+            if sits:
+                log_predictions(sport, today, f["home"], f["away"],
+                                sits, f["home_id"], f["away_id"])
+                total += 1
+    return total
+
+
 def stamp_meta(key: str, value: str) -> None:
     con = get_pg_connection()
     with con, con.cursor() as cur:
@@ -235,6 +263,44 @@ def main() -> int:
         n = load_picks()
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         stamp_meta("last_refresh", now)
+
+        # Historial (best-effort: nunca rompe el refresco):
+        #   1. registra el top-10 de los partidos de hoy,
+        #   2. resuelve las predicciones cuyos partidos ya terminaron,
+        #   3. caduca las antiguas (>3 meses).
+        try:
+            logged = log_todays_fixtures()
+            print(f"  historial: {logged} partidos de hoy registrados")
+        except Exception as e:
+            print(f"  [aviso] fixtures de hoy no registrados: {e}")
+        try:
+            # Resolución MISMO DÍA (hoy + ayer, por si algún partido terminó tarde
+            # tras el refresco anterior). No espera a Retrosheet ni al CSV:
+            #   béisbol -> boxscores de statsapi; fútbol -> marcadores de football-data.org.
+            from datetime import timedelta
+            from core.fixtures.mlb import finished_boxscores
+            from core.fixtures.football import finished_scores
+            from core.history.store import (resolve_baseball_from_boxscores,
+                                            resolve_football_from_scores)
+            t = _today()
+            boxes = finished_boxscores(t) + finished_boxscores(t - timedelta(days=1))
+            scores = finished_scores(t) + finished_scores(t - timedelta(days=1))
+            sd_b = resolve_baseball_from_boxscores(boxes)
+            sd_f = resolve_football_from_scores(scores)
+            print(f"  historial (mismo día): {sd_f['resueltas']} fútbol + "
+                  f"{sd_b['resueltas']} béisbol resueltas")
+        except Exception as e:
+            print(f"  [aviso] resolución mismo día: {e}")
+        try:
+            from core.history.store import (resolve_football_pending,
+                                            resolve_baseball_pending, expire_old)
+            rf = resolve_football_pending()
+            rb = resolve_baseball_pending()
+            expired = expire_old(months=3)
+            print(f"  historial: {rf['resueltas']} fútbol + {rb['resueltas']} béisbol "
+                  f"resueltas (Retrosheet/CSV), {expired} caducadas")
+        except Exception as e:
+            print(f"  [aviso] historial no procesado: {e}")
 
         failed = [s for s, ok in results.items() if not ok]
         if results:

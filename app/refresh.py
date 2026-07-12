@@ -121,7 +121,7 @@ def render_refresh_button() -> None:
         return
 
     st.sidebar.divider()
-    if st.sidebar.button(":material/sync: Actualizar base de datos", use_container_width=True):
+    if st.sidebar.button(":material/sync: Actualizar base de datos", width="stretch"):
         ok, msg = _trigger(token, repo)
         if not ok:
             st.sidebar.error(f"No se pudo lanzar el refresco: {msg}")
