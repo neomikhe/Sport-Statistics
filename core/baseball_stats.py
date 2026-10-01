@@ -1,17 +1,3 @@
-"""
-Estimación de hits/jonrones/ponches esperados de un enfrentamiento MLB, desde la BD.
-
-Modelo multiplicativo (ofensiva_equipo × pitcheo_rival / media_liga), el mismo que se
-usa para las carreras pero aplicado a hits, jonrones y ponches. Devuelve la lista de
-mercados lista para mezclar con los de carreras. [] si la BD aún no tiene esas columnas
-pobladas (re-ingesta de Retrosheet pendiente).
-
-Notas del modelo:
-  - hf/ha: hits que consigue el equipo / que permite su pitcheo, por partido.
-  - hrf/hra: ídem jonrones.
-  - kf: veces que los bateadores del equipo se ponchan; ka: ponches que consiguen sus
-    pitchers. El total de ponches del juego = kf_local + kf_visitante.
-"""
 import pandas as pd
 
 from sports.baseball.stats_markets import stats_markets
@@ -31,7 +17,7 @@ def _rates(engine):
         return None, None
     if df.empty:
         return None, None
-    df = df[df["date"].dt.year == df["date"].dt.year.max()]   # última temporada disponible
+    df = df[df["date"].dt.year == df["date"].dt.year.max()]
 
     home = pd.DataFrame({
         "tid": df.home_team_id, "hf": df.home_hits, "ha": df.away_hits,
@@ -52,7 +38,6 @@ def _rates(engine):
 
 
 def stats_markets_for(engine, home_id: int, away_id: int) -> list:
-    """Mercados de hits/jonrones/ponches del enfrentamiento. [] si faltan datos."""
     rates, league = _rates(engine)
     if not rates or home_id not in rates or away_id not in rates:
         return []

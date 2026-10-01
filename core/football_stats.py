@@ -1,28 +1,12 @@
-"""
-Estimación de córners/tarjetas esperados de un enfrentamiento, desde la BD (v2).
-
-Modelo multiplicativo (ataque × defensa × media de LIGA), pero con dos mejoras sobre v1:
-  - Media por LIGA, no global: las tarjetas varían enormemente entre ligas (Grecia
-    ~5.2 vs Países Bajos ~3.0 por partido), así que la media de referencia se toma de
-    la liga del enfrentamiento.
-  - Ponderación por RECENCIA: los partidos recientes pesan más (decaimiento exponencial),
-    para captar la forma/plantilla/árbitro actuales.
-
-Si la BD aún no tiene columnas de córners pobladas (re-ingesta pendiente), devuelve [].
-"""
 import pandas as pd
 
 from sports.football.stats_markets import stats_markets
 
 _CACHE = {}
-_HALFLIFE_DAYS = 540.0   # ~1.5 temporadas: los partidos recientes pesan más
+_HALFLIFE_DAYS = 540.0
 
 
 def _rates(engine):
-    """Tasas por equipo (recencia), medias por liga y liga principal de cada equipo.
-
-    Devuelve (rates, league_avg, team_league, global_avg) o (None, ...) si no hay dato.
-    """
     if "rates" in _CACHE:
         return _CACHE["rates"], _CACHE["league_avg"], _CACHE["team_league"], _CACHE["global_avg"]
     try:
@@ -40,11 +24,9 @@ def _rates(engine):
     df["away_cards"] = df["away_yellows"].fillna(0) + df["away_reds"].fillna(0)
     df["home_reds"] = df["home_reds"].fillna(0)
     df["away_reds"] = df["away_reds"].fillna(0)
-    # Peso por recencia (decaimiento exponencial por antigüedad en días).
     age = (df["date"].max() - df["date"]).dt.days.clip(lower=0)
     df["w"] = 0.5 ** (age / _HALFLIFE_DAYS)
 
-    # --- Medias por liga (ponderadas) sobre el nivel partido ---
     def _wmean(sub, col):
         wsum = sub["w"].sum()
         return float((sub[col] * sub["w"]).sum() / wsum) if wsum else 0.0
@@ -63,7 +45,6 @@ def _rates(engine):
         "kf": (_wmean(df, "home_cards") + _wmean(df, "away_cards")) / 2,
         "rf": (_wmean(df, "home_reds") + _wmean(df, "away_reds")) / 2}
 
-    # --- Tasas por equipo (perspectiva local + visitante, ponderadas por recencia) ---
     home = df.rename(columns={
         "home_team_id": "tid", "home_corners": "cf", "away_corners": "ca",
         "home_cards": "kf", "away_cards": "ka", "home_reds": "rf", "league": "lg"})
@@ -78,7 +59,6 @@ def _rates(engine):
         wsum = sub["w"].sum() or 1.0
         rates[int(tid)] = {c: float((sub[c] * sub["w"]).sum() / wsum)
                            for c in ("cf", "ca", "kf", "ka", "rf")}
-        # Liga principal = donde el equipo acumula más peso.
         team_league[int(tid)] = sub.groupby("lg")["w"].sum().idxmax()
 
     _CACHE.update(rates=rates, league_avg=league_avg,
@@ -87,12 +67,10 @@ def _rates(engine):
 
 
 def stats_markets_for(engine, home_id: int, away_id: int) -> list:
-    """Mercados de córners/tarjetas del enfrentamiento. [] si faltan datos."""
     rates, league_avg, team_league, global_avg = _rates(engine)
     if not rates or home_id not in rates or away_id not in rates:
         return []
 
-    # Media de referencia = la de la liga del enfrentamiento (la del local).
     lg = team_league.get(home_id) or team_league.get(away_id)
     base = league_avg.get(lg, global_avg)
 
