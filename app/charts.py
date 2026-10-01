@@ -1,50 +1,46 @@
-"""
-Gráficos Plotly con estética premium oscura (estilo Sofascore / ESPN Stats).
+import math
 
-Sin toolbar, fondo transparente (se integra con el tema), tipografía Inter,
-colores de marca por deporte. Todos los datos vienen del modelo (no de usuario);
-las etiquetas que sí pueden traer texto de BD (nombres de equipo) se escapan.
-"""
-import html
-
+import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 
-# Acento por deporte (coincide con app/ui.py)
-ACCENT = {
-    "football": "#5c9a85",
-    "basketball": "#bd8560",
-    "baseball": "#5f8fa8",
-    "tennis": "#b3985c",
-}
-ACCENT_RGB = {
-    "football": "92, 154, 133",
-    "basketball": "189, 133, 96",
-    "baseball": "95, 143, 168",
-    "tennis": "179, 152, 92",
-}
+from app.ui import AWAY_COLOR, BRAND, DRAW_COLOR, SPORTS
 
-_FONT = "IBM Plex Sans, system-ui, sans-serif"
-_GRID = "rgba(255,255,255,0.05)"
-_MUTED = "#94a3b8"
-_INK = "#0a0e1a"           # texto oscuro para fondos claros
-_UP = "#5c9a85"            # ganancia (bankroll)
-_DOWN = "#ef4444"          # pérdida (bankroll)
-_DRAW = "#475569"          # empate / neutro
-_AWAY = "#94a3b8"          # visitante en la barra de probabilidad
-_NO_BAR = {"displayModeBar": False}
+FONT = "Schibsted Grotesk, system-ui, sans-serif"
+DISPLAY = "Big Shoulders Display, Arial Narrow, sans-serif"
+SURFACE = "#0f141c"
+GRID = "#1b2430"
+AXIS = "#2a3442"
+MUTED = "#8a95a8"
+TEXT_2 = "#b9c3d3"
+TEXT = "#eef2f7"
+GOOD = "#35c46a"
+BAD = "#e5484d"
+CONFIG = {"displayModeBar": False, "responsive": True, "scrollZoom": False}
 
-# ---- Mejora #4: plantilla Plotly registrada UNA vez (DRY) ----
-pio.templates["sportstats_dark"] = go.layout.Template(layout=dict(
+pio.templates["floodlight"] = go.layout.Template(layout=dict(
     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family=_FONT, color=_MUTED, size=12),
-    colorway=list(ACCENT.values()),
-    margin=dict(l=10, r=10, t=26, b=10),
-    xaxis=dict(showgrid=False, zeroline=False, color=_MUTED),
-    yaxis=dict(showgrid=True, gridcolor=_GRID, zeroline=False, color=_MUTED),
-    hoverlabel=dict(font=dict(family=_FONT), bgcolor="#0d1426"),
+    font=dict(family=FONT, color=MUTED, size=12),
+    margin=dict(l=8, r=8, t=30, b=8),
+    xaxis=dict(showgrid=False, zeroline=False, linecolor=AXIS, tickcolor=AXIS,
+               ticks="outside", ticklen=4, color=MUTED, automargin=True),
+    yaxis=dict(showgrid=True, gridcolor=GRID, gridwidth=1, zeroline=False, color=MUTED,
+               automargin=True),
+    hoverlabel=dict(bgcolor="#151c27", bordercolor=AXIS, font=dict(family=FONT, color=TEXT, size=12)),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(color=TEXT_2, size=12),
+                bgcolor="rgba(0,0,0,0)"),
+    hovermode="closest",
 ))
+
+
+def accent(sport: str | None) -> str:
+    return SPORTS.get(sport or "", BRAND)["accent"]
+
+
+def _plain(text) -> str:
+    return (str(text).replace("<", "‹").replace(">", "›")
+            .replace("%{", "% {").replace("&", "&amp;"))
 
 
 def _rgba(hex_color: str, alpha: float) -> str:
@@ -53,172 +49,177 @@ def _rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({r},{g},{b},{alpha})"
 
 
-def _text_on(hex_color: str) -> str:
-    """Negro o blanco según la luminancia del fondo (contraste legible)."""
-    h = hex_color.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-    return _INK if lum > 0.6 else "#ffffff"
+def _show(fig, height: int, key: str | None = None) -> None:
+    fig.update_layout(template="floodlight", height=height)
+    st.plotly_chart(fig, theme=None, config=CONFIG, key=key)
 
 
-def _empty(height: int, msg: str = "Sin datos recientes") -> None:
-    """Mejora #5: placeholder con estilo cuando no hay datos que graficar."""
-    st.markdown(
-        f"<div style='height:{height}px;display:flex;align-items:center;"
-        f"justify-content:center;color:{_MUTED};font-family:{_FONT};font-size:.85rem;"
-        f"border:1px dashed {_GRID};border-radius:14px;'>{html.escape(msg)}</div>",
-        unsafe_allow_html=True,
+def score_heatmap(matrix, home: str, away: str, sport: str = "football", key=None) -> None:
+    m = np.asarray(matrix, dtype=float) * 100.0
+    n = m.shape[0]
+    c = accent(sport)
+    home, away = _plain(home), _plain(away)
+    text = [[f"{v:.1f}" if v >= 1.5 else "" for v in row] for row in m]
+    hover = [[f"{home} {i} – {j} {away}<br><b>{m[i, j]:.2f}%</b>" for j in range(n)] for i in range(n)]
+    fig = go.Figure(go.Heatmap(
+        z=m, x=list(range(n)), y=list(range(n)), text=text, texttemplate="%{text}",
+        textfont=dict(family=FONT, size=11, color=TEXT),
+        hovertext=hover, hovertemplate="%{hovertext}<extra></extra>",
+        colorscale=[[0.0, SURFACE], [0.35, _rgba(c, 0.45)], [1.0, c]],
+        xgap=2, ygap=2, showscale=False,
+    ))
+    fig.update_layout(
+        xaxis=dict(title=dict(text=f"Goles de {away}", font=dict(color=TEXT_2, size=12)),
+                   side="top", tickmode="linear", showline=False, ticks=""),
+        yaxis=dict(title=dict(text=f"Goles de {home}", font=dict(color=TEXT_2, size=12)),
+                   autorange="reversed", tickmode="linear", showgrid=False),
+        margin=dict(l=8, r=8, t=40, b=8),
     )
+    _show(fig, 380, key)
 
 
-def _layout(height: int, **extra):
-    base = dict(template="sportstats_dark", height=height,
-                showlegend=False, hovermode="x unified")
-    base.update(extra)
-    return base
-
-
-def _show(fig) -> None:
-    st.plotly_chart(fig, width="stretch", config=_NO_BAR)
-
-
-def trend(df, x_col, for_col, against_col, for_label, against_label, accent):
-    """Tendencia: área 'a favor' (acento) + línea punteada 'en contra' (gris)."""
-    if df is None or len(df) == 0:
-        return _empty(220)
+def margin_normal(mu: float, sigma: float, home: str, away: str, sport: str, key=None) -> None:
+    x = np.linspace(mu - 3.2 * sigma, mu + 3.2 * sigma, 241)
+    y = np.exp(-0.5 * ((x - mu) / sigma) ** 2) / (sigma * math.sqrt(2 * math.pi)) * 100
+    c = accent(sport)
+    home, away = _plain(home), _plain(away)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=df[x_col], y=df[for_col], name=for_label, mode="lines+markers",
-        line=dict(color=accent, width=2.5, shape="spline"),
-        fill="tozeroy", fillcolor=_rgba(accent, 0.13),
-        marker=dict(size=6, color=accent),
-    ))
-    fig.add_trace(go.Scatter(
-        x=df[x_col], y=df[against_col], name=against_label, mode="lines+markers",
-        line=dict(color="#64748b", width=1.8, dash="dot", shape="spline"),
-        marker=dict(size=5, color="#64748b"),
-    ))
-    fig.update_layout(**_layout(
-        220, showlegend=True,
-        legend=dict(orientation="h", y=1.22, x=0, font=dict(size=11)),
-    ))
-    _show(fig)
+    for mask, color, name in ((x >= 0, c, f"Gana {home}"), (x <= 0, AWAY_COLOR, f"Gana {away}")):
+        fig.add_trace(go.Scatter(
+            x=x[mask], y=y[mask], mode="lines", name=name, line=dict(color=color, width=2),
+            fill="tozeroy", fillcolor=_rgba(color if color.startswith("#") else "#c3cedd", 0.12),
+            hovertemplate="Margen %{x:.0f}<br>densidad %{y:.2f}%<extra></extra>"))
+    fig.add_vline(x=mu, line=dict(color=TEXT_2, width=1),
+                  annotation=dict(text=f"esperado {mu:+.1f}", font=dict(color=TEXT_2, size=11),
+                                  yanchor="bottom"))
+    fig.update_layout(xaxis=dict(title=dict(text=f"Margen de {home} (puntos)", font=dict(color=TEXT_2))),
+                      yaxis=dict(title=None, ticksuffix="%"), hovermode="x")
+    _show(fig, 280, key)
 
 
-def bars(labels, values, accent, height=300, horizontal=False, pct=False):
-    """Barras de marca (marcadores probables, Elo por superficie...)."""
-    if values is None or len(values) == 0:
-        return _empty(height)
-    text = [(f"{v * 100:.1f}%" if pct else f"{v:.0f}") for v in values]
+def diff_bars(pmf_by_diff: dict, home: str, away: str, sport: str, unit: str = "carreras",
+              key=None) -> None:
+    ks = sorted(pmf_by_diff)
+    c = accent(sport)
+    home, away = _plain(home), _plain(away)
+    colors = [c if k > 0 else (AWAY_COLOR if k < 0 else DRAW_COLOR) for k in ks]
+    vals = [pmf_by_diff[k] * 100 for k in ks]
     fig = go.Figure(go.Bar(
-        x=(values if horizontal else labels),
-        y=(labels if horizontal else values),
-        orientation=("h" if horizontal else "v"),
-        marker=dict(color=accent, line=dict(width=0)),
-        text=text, textposition="auto",
-        textfont=dict(family=_FONT, color="#ffffff", size=11),
-        hoverinfo="skip",
-    ))
-    extra = dict(hovermode=False)
-    if horizontal:
-        extra["yaxis"] = dict(autorange="reversed", showgrid=False, color=_MUTED)
-        extra["xaxis"] = dict(showgrid=True, gridcolor=_GRID, color=_MUTED)
-    fig.update_layout(**_layout(height, **extra))
-    _show(fig)
+        x=ks, y=vals, marker=dict(color=colors, cornerradius=4), width=0.72,
+        hovertemplate="Diferencia %{x:+d}<br><b>%{y:.1f}%</b><extra></extra>"))
+    fig.update_layout(
+        xaxis=dict(title=dict(text=f"{home} − {away} ({unit})", font=dict(color=TEXT_2)),
+                   tickmode="linear", dtick=1),
+        yaxis=dict(ticksuffix="%"), bargap=0.1)
+    _show(fig, 280, key)
 
 
-def win_probability(labels, values, colors, height=76):
-    """Mejora #1: barra 100% apilada de probabilidad de victoria (estilo Sofascore).
+def set_scores(dist: dict, name_a: str, name_b: str, sport: str = "tennis", key=None) -> None:
+    name_a, name_b = _plain(name_a), _plain(name_b)
+    items = sorted(dist.items(), key=lambda kv: (kv[0][0] - kv[0][1]), reverse=True)
+    labels = [f"{a}-{b}" for (a, b), _ in items]
+    vals = [p * 100 for _, p in items]
+    c = accent(sport)
+    colors = [c if a > b else AWAY_COLOR for (a, b), _ in items]
+    fig = go.Figure(go.Bar(
+        x=labels, y=vals, marker=dict(color=colors, cornerradius=4), width=0.6,
+        text=[f"{v:.0f}%" for v in vals], textposition="outside",
+        textfont=dict(color=TEXT_2, size=12),
+        hovertemplate="%{x}<br><b>%{y:.1f}%</b><extra></extra>"))
+    fig.update_layout(
+        xaxis=dict(title=dict(text=f"Sets ({name_a} – {name_b})", font=dict(color=TEXT_2))),
+        yaxis=dict(ticksuffix="%", rangemode="tozero"), showlegend=False)
+    _show(fig, 260, key)
 
-    `labels` puede incluir nombres de equipo (BD) -> se escapan en la leyenda HTML.
-    """
-    total = sum(values) or 1.0
+
+def team_trend(dates, scored, conceded, label_for: str, label_against: str,
+               color: str, key=None) -> None:
+    c = color
     fig = go.Figure()
-    for lab, v, color in zip(labels, values, colors):
-        frac = v / total
-        fig.add_trace(go.Bar(
-            x=[frac], y=["ml"], orientation="h", width=0.62,
-            marker=dict(color=color, line=dict(color=_INK, width=1)),
-            text=[f"{frac * 100:.0f}%"], textposition="inside",
-            insidetextanchor="middle",
-            textfont=dict(family=_FONT, color=_text_on(color), size=15),
-            hovertext=[f"{lab}: {frac * 100:.1f}%"], hoverinfo="text",
-        ))
-    fig.update_layout(
-        template="sportstats_dark", barmode="stack", height=height,
-        margin=dict(l=0, r=0, t=4, b=4), showlegend=False, bargap=0,
-        xaxis=dict(visible=False, range=[0, 1]), yaxis=dict(visible=False),
-    )
-    _show(fig)
-    chips = "&nbsp;&nbsp;&nbsp;".join(
-        f"<span style='color:{c}'>●</span> "
-        f"<span style='color:#e2e8f0;font-weight:600'>{html.escape(str(lab))}</span> "
-        f"<span style='color:{_MUTED}'>{v / total * 100:.0f}%</span>"
-        for lab, v, c in zip(labels, values, colors)
-    )
-    st.markdown(
-        f"<div style='font-family:{_FONT};font-size:.82rem;display:flex;gap:1rem;"
-        f"flex-wrap:wrap;justify-content:center;margin-top:-6px'>{chips}</div>",
-        unsafe_allow_html=True,
-    )
+    fig.add_trace(go.Scatter(
+        x=dates, y=scored, name=label_for, mode="lines+markers",
+        line=dict(color=c, width=2), fill="tozeroy", fillcolor=_rgba(c, 0.10),
+        marker=dict(size=8, color=c, line=dict(color=SURFACE, width=2)),
+        hovertemplate="%{x}<br>" + label_for + ": <b>%{y}</b><extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=dates, y=conceded, name=label_against, mode="lines+markers",
+        line=dict(color="#7d889b", width=2),
+        marker=dict(size=8, color="#7d889b", line=dict(color=SURFACE, width=2)),
+        hovertemplate="%{x}<br>" + label_against + ": <b>%{y}</b><extra></extra>"))
+    fig.update_layout(showlegend=True, xaxis=dict(type="category", tickangle=0, nticks=6),
+                      yaxis=dict(rangemode="tozero"), hovermode="x unified")
+    _show(fig, 240, key)
 
 
-def gauge(prob, accent, label="", height=190):
-    """Mejora #3: donut radial para la probabilidad del mercado destacado."""
-    pct = max(0.0, min(1.0, float(prob)))
-    fig = go.Figure(go.Pie(
-        values=[pct, 1 - pct], hole=0.72, sort=False, direction="clockwise",
-        rotation=0, marker=dict(colors=[accent, "rgba(255,255,255,0.06)"]),
-        textinfo="none", hoverinfo="skip",
-    ))
-    fig.update_layout(
-        template="sportstats_dark", height=height,
-        margin=dict(l=0, r=0, t=6, b=6), showlegend=False,
-        annotations=[dict(text=f"<b>{pct * 100:.0f}%</b>", x=0.5, y=0.5,
-                          font=dict(family=_FONT, size=26, color="#ffffff"),
-                          showarrow=False)],
-    )
-    _show(fig)
-    if label:
-        st.markdown(
-            f"<div style='text-align:center;color:{_MUTED};margin-top:-10px;"
-            f"font-family:{_FONT};font-size:.85rem'>{html.escape(str(label))}</div>",
-            unsafe_allow_html=True,
-        )
-
-
-def bankroll(dates, values, baseline=None, height=280):
-    """Mejora #2: evolución del bankroll con break-even y relleno verde/rojo."""
-    values, dates = list(values), list(dates)
+def bankroll(dates, values, baseline: float, sport: str = "football", key=None) -> None:
+    values = list(values)
     if not values:
-        return _empty(height)
-    if baseline is None:
-        baseline = values[0]
-    line_color = _UP if values[-1] >= baseline else _DOWN
-    base_line = [baseline] * len(dates)
-    y_pos = [max(v, baseline) for v in values]
-    y_neg = [min(v, baseline) for v in values]
+        return
+    c = accent(sport)
+    fig = go.Figure(go.Scatter(
+        x=list(dates), y=values, mode="lines", line=dict(color=c, width=2),
+        fill="tozeroy", fillcolor=_rgba(c, 0.08), name="Banco",
+        hovertemplate="%{x|%d %b %Y}<br>Banco <b>%{y:,.0f}</b><extra></extra>"))
+    fig.add_hline(y=baseline, line=dict(color=TEXT_2, width=1, dash="dot"),
+                  annotation=dict(text=f"Equilibrio {baseline:,.0f}", font=dict(color=TEXT_2, size=11),
+                                  xanchor="left", x=0, yanchor="bottom"))
+    lo, hi = min(values + [baseline]), max(values + [baseline])
+    pad = (hi - lo) * 0.08 or 10
+    fig.update_layout(yaxis=dict(range=[lo - pad, hi + pad], tickformat=",.0f"),
+                      hovermode="x")
+    _show(fig, 300, key)
 
+
+def reliability(pred, obs, counts, key=None) -> None:
+    pred = [p * 100 for p in pred]
+    obs = [o * 100 for o in obs]
+    size = [max(8.0, min(26.0, 6 + math.sqrt(n) * 1.2)) for n in counts]
     fig = go.Figure()
-    # Relleno verde por encima del break-even
-    fig.add_trace(go.Scatter(x=dates, y=base_line, mode="lines",
-                             line=dict(width=0), hoverinfo="skip", showlegend=False))
-    fig.add_trace(go.Scatter(x=dates, y=y_pos, mode="lines", line=dict(width=0),
-                             fill="tonexty", fillcolor=_rgba(_UP, 0.15),
-                             hoverinfo="skip", showlegend=False))
-    # Relleno rojo por debajo del break-even
-    fig.add_trace(go.Scatter(x=dates, y=base_line, mode="lines",
-                             line=dict(width=0), hoverinfo="skip", showlegend=False))
-    fig.add_trace(go.Scatter(x=dates, y=y_neg, mode="lines", line=dict(width=0),
-                             fill="tonexty", fillcolor=_rgba(_DOWN, 0.15),
-                             hoverinfo="skip", showlegend=False))
-    # Línea de valor (color según ganancia/pérdida final)
-    fig.add_trace(go.Scatter(x=dates, y=values, mode="lines",
-                             line=dict(color=line_color, width=2.5, shape="spline"),
-                             hovertemplate="%{y:,.0f}<extra></extra>"))
-    fig.update_layout(**_layout(height))
-    fig.add_hline(y=baseline, line=dict(color=_MUTED, width=1, dash="dot"),
-                  annotation_text=f"break-even {baseline:,.0f}",
-                  annotation_position="top left",
-                  annotation_font=dict(family=_FONT, color=_MUTED, size=11))
-    _show(fig)
+    fig.add_trace(go.Scatter(x=[0, 100], y=[0, 100], mode="lines", name="Calibración perfecta",
+                             line=dict(color=AXIS, width=1.5, dash="dot"), hoverinfo="skip"))
+    fig.add_trace(go.Scatter(
+        x=pred, y=obs, mode="lines+markers", name="Modelo",
+        line=dict(color=BRAND["accent"], width=2),
+        marker=dict(size=size, color=BRAND["accent"], line=dict(color=SURFACE, width=2)),
+        customdata=counts,
+        hovertemplate="Prometido %{x:.0f}%<br>Real <b>%{y:.1f}%</b><br>%{customdata} casos<extra></extra>"))
+    fig.update_layout(
+        showlegend=True,
+        xaxis=dict(title=dict(text="Probabilidad del modelo", font=dict(color=TEXT_2)),
+                   range=[0, 100], ticksuffix="%", showgrid=True, gridcolor=GRID),
+        yaxis=dict(title=dict(text="Frecuencia real", font=dict(color=TEXT_2)),
+                   range=[0, 100], ticksuffix="%"))
+    _show(fig, 340, key)
+
+
+def weekly_trend(weeks, hit_rate, mean_prob, key=None) -> None:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=weeks, y=[v * 100 for v in mean_prob], name="Prometido (prob. media)", mode="lines",
+        line=dict(color="#7d889b", width=2),
+        hovertemplate="%{x|%d %b}<br>Prometido <b>%{y:.1f}%</b><extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=weeks, y=[v * 100 for v in hit_rate], name="Real (tasa de acierto)", mode="lines+markers",
+        line=dict(color=BRAND["accent"], width=2),
+        marker=dict(size=8, color=BRAND["accent"], line=dict(color=SURFACE, width=2)),
+        hovertemplate="%{x|%d %b}<br>Real <b>%{y:.1f}%</b><extra></extra>"))
+    fig.update_layout(showlegend=True, yaxis=dict(ticksuffix="%"), hovermode="x unified")
+    _show(fig, 280, key)
+
+
+def yield_by_group(labels, yields, counts, key=None) -> None:
+    order = np.argsort(yields)
+    labels = [_plain(labels[i]) for i in order]
+    ys = [yields[i] * 100 for i in order]
+    ns = [counts[i] for i in order]
+    colors = [GOOD if v >= 0 else BAD for v in ys]
+    fig = go.Figure(go.Bar(
+        x=ys, y=labels, orientation="h", marker=dict(color=colors, cornerradius=4), width=0.62,
+        text=[f"{v:+.1f}%" for v in ys], textposition="outside",
+        textfont=dict(color=TEXT_2, size=11), customdata=ns,
+        hovertemplate="%{y}<br>Yield <b>%{x:+.1f}%</b><br>%{customdata} picks<extra></extra>"))
+    fig.add_vline(x=0, line=dict(color=AXIS, width=1))
+    fig.update_layout(xaxis=dict(ticksuffix="%", showgrid=True, gridcolor=GRID),
+                      yaxis=dict(showgrid=False), showlegend=False,
+                      margin=dict(l=8, r=40, t=10, b=8))
+    _show(fig, max(220, 34 * len(labels) + 40), key)

@@ -1,16 +1,3 @@
-"""
-Botón "Actualizar base de datos" para el dashboard.
-
-NO ejecuta el pipeline en la web (sería lento y agotaría la RAM del tier free):
-dispara el workflow de GitHub Actions (refresh.yml) vía API y sondea el progreso
-que `scripts/refresh_cloud.py` va escribiendo en app_meta['refresh_status'].
-
-Requiere en st.secrets (ver .streamlit/secrets.toml.example):
-    github_token  -> PAT con permiso Actions: write sobre el repo
-    github_repo   -> "tu-usuario/SportStatistics"
-
-Si no están configurados (p. ej. en local), el botón sencillamente no aparece.
-"""
 import json
 import os
 import time
@@ -23,7 +10,7 @@ import streamlit as st
 
 WORKFLOW_FILE = "refresh.yml"
 REF = "main"
-WAIT_TIMEOUT_S = 480   # 8 min máximo de espera bloqueante
+WAIT_TIMEOUT_S = 480
 POLL_EVERY_S = 4
 
 
@@ -41,7 +28,6 @@ def _config():
 
 
 def _trigger(token: str, repo: str):
-    """Dispara workflow_dispatch. Devuelve (ok, mensaje)."""
     url = f"https://api.github.com/repos/{repo}/actions/workflows/{WORKFLOW_FILE}/dispatches"
     req = urllib.request.Request(
         url,
@@ -80,7 +66,6 @@ def _parse_ts(value):
 
 
 def _wait_for_completion(engine, started):
-    """Sondea app_meta y pinta la barra hasta que el job termina o se agota el tiempo."""
     deadline = time.time() + WAIT_TIMEOUT_S
     with st.status("Actualizando base de datos…", expanded=True) as status:
         bar = st.progress(0.0)
@@ -115,16 +100,14 @@ def _wait_for_completion(engine, started):
 
 
 def render_refresh_button() -> None:
-    """Pinta el botón en la barra lateral (solo si hay token+repo configurados)."""
     token, repo = _config()
     if not (token and repo):
         return
 
-    st.sidebar.divider()
-    if st.sidebar.button(":material/sync: Actualizar base de datos", width="stretch"):
+    if st.button("Actualizar base de datos", icon=":material/sync:", key="refresh_db"):
         ok, msg = _trigger(token, repo)
         if not ok:
-            st.sidebar.error(f"No se pudo lanzar el refresco: {msg}")
+            st.error(f"No se pudo lanzar el refresco: {msg}", icon=":material/error:")
             return
         st.session_state["_refresh_started"] = datetime.now(timezone.utc)
         from core.database.connection import get_sqlalchemy_engine

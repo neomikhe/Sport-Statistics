@@ -1,433 +1,821 @@
-"""
-Tema visual + componentes del dashboard (rediseño MATE / formal).
-
-Estética "sports-data terminal": fondo slate casi negro, superficies planas (sin
-glassmorphism ni glows), acentos APAGADOS por deporte, tipografía IBM Plex Sans/Mono
-(seria y técnica) e ICONOS SVG (Lucide) en vez de emojis.
-
-El CSS es ESTÁTICO (no interpola datos de usuario) → sin riesgo XSS. Los componentes
-(hero, cabecera H2H) SÍ escapan los nombres que vienen de la BD.
-"""
 import html
+import re
+from datetime import datetime, timezone
 
 import streamlit as st
 
-_THEME_CSS = """
+BRAND = {"accent": "#c5f24a", "rgb": "197,242,74"}
+
+SPORTS = {
+    "football":   {"label": "Fútbol", "short": "Fútbol", "icon": ":material/sports_soccer:",
+                   "accent": "#1fae78", "rgb": "31,174,120", "unit": "goles",
+                   "entity": "Equipo", "draw": True},
+    "basketball": {"label": "Baloncesto", "short": "NBA", "icon": ":material/sports_basketball:",
+                   "accent": "#e8662a", "rgb": "232,102,42", "unit": "puntos",
+                   "entity": "Equipo", "draw": False},
+    "baseball":   {"label": "Béisbol", "short": "MLB", "icon": ":material/sports_baseball:",
+                   "accent": "#3f8cf0", "rgb": "63,140,240", "unit": "carreras",
+                   "entity": "Equipo", "draw": False},
+    "tennis":     {"label": "Tenis", "short": "Tenis", "icon": ":material/sports_tennis:",
+                   "accent": "#e0569a", "rgb": "224,86,154", "unit": "sets",
+                   "entity": "Jugador", "draw": False},
+}
+DRAW_COLOR = "#5d6778"
+AWAY_COLOR = "#c3cedd"
+
+
+# Todo dato dinámico pasa por esc() antes de entrar en HTML.
+def esc(value) -> str:
+    return html.escape(str(value), quote=True)
+
+
+def csv_bytes(df) -> bytes:
+    from pandas.api.types import is_object_dtype, is_string_dtype
+
+    out = df.copy()
+    for col in out.columns:
+        if is_object_dtype(out[col]) or is_string_dtype(out[col]):
+            out[col] = out[col].map(
+                lambda v: f"'{v}" if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r") else v)
+    return out.to_csv(index=False).encode("utf-8")
+
+
+def safe_url(url) -> str:
+    u = str(url or "").strip()
+    return u if u.lower().startswith("https://") else ""
+
+
+def cap(text) -> str:
+    s = str(text)
+    return s[:1].upper() + s[1:]
+
+
+def fmt_pct(p, digits: int = 1) -> str:
+    return "—" if p is None else f"{float(p) * 100:.{digits}f}%"
+
+
+def fmt_odds(p) -> str:
+    if p is None or float(p) < 0.001:
+        return "—"
+    o = 1.0 / float(p)
+    return f"{o:.2f}" if o < 100 else f"{o:.0f}"
+
+
+def fmt_num(x, digits: int = 1) -> str:
+    return "—" if x is None else f"{float(x):,.{digits}f}"
+
+
+_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
-
-:root {
-  --accent: #5c9a85;            /* default (fútbol); inject_theme lo sobreescribe */
-  --accent-rgb: 92, 154, 133;
-  --bg: #0a0d13;
-  --card: #131923;
-  --card-2: #1a2130;
-  --border: rgba(255, 255, 255, 0.07);
-  --text: #e6eaf0;
-  --muted: #a4b0c2;             /* gris de soporte (contraste ~8:1 sobre el fondo) */
+:root{
+  --bg:#07090d; --surface:#0f141c; --surface-2:#141b25; --surface-3:#1a2330;
+  --line:rgba(255,255,255,.075); --line-2:rgba(255,255,255,.14);
+  --text:#eef2f7; --text-2:#b9c3d3; --muted:#8a95a8;
+  --volt:#c5f24a; --volt-rgb:197,242,74; --on-volt:#0c1204;
+  --accent:#c5f24a; --accent-rgb:197,242,74;
+  --good:#35c46a; --warn:#f5b83d; --serious:#f0884a; --bad:#e5484d;
+  --draw:#5d6778; --away:#c3cedd;
+  --f-display:'Big Shoulders Display','Arial Narrow','Roboto Condensed',sans-serif;
+  --f-ui:'Schibsted Grotesk',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --f-mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --r-sm:8px; --r-md:12px; --r-lg:18px;
+  --ease:cubic-bezier(.2,.75,.25,1);
 }
 
-/* ---------- Tipografía (IBM Plex: formal + técnica) ---------- */
-html, body, .stApp, .stApp p, .stApp li, .stApp label, .stApp input, .stApp button, .stApp select {
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-}
-.stApp h1, .stApp h2, .stApp h3, .stApp h4 {
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-weight: 600;
-  letter-spacing: 0;
-  color: #ffffff;
-}
-[data-testid="stMetricValue"], code, kbd, pre {
-  font-family: 'IBM Plex Mono', monospace !important;
-}
-.stApp p, .stApp li { line-height: 1.65; color: var(--muted); }
-
-/* ---------- Fondo mate (plano, mínimo degradado) ---------- */
-.stApp {
+/* ---------- Atmósfera: dos focos de estadio sobre tinta ---------- */
+.stApp{
   background:
-    linear-gradient(180deg, rgba(var(--accent-rgb), 0.035), transparent 260px),
+    radial-gradient(900px 420px at 8% -170px, rgba(var(--accent-rgb),.14), transparent 70%),
+    radial-gradient(760px 380px at 96% -210px, rgba(var(--volt-rgb),.07), transparent 70%),
+    linear-gradient(180deg, rgba(255,255,255,.015), transparent 520px),
     var(--bg) !important;
-  color: var(--text) !important;
+}
+[data-testid="stHeader"]{
+  background:rgba(7,9,13,.8) !important;
+  backdrop-filter:saturate(140%) blur(12px); -webkit-backdrop-filter:saturate(140%) blur(12px);
+  border-bottom:1px solid var(--line);
+}
+[data-testid="stDecoration"]{display:none;}
+[data-testid="stMainBlockContainer"]{max-width:1240px; padding-left:2rem; padding-right:2rem; padding-bottom:5rem;}
+@media (max-width:760px){
+  [data-testid="stMainBlockContainer"]{padding-left:.9rem; padding-right:.9rem; padding-bottom:4rem;}
 }
 
-/* ---------- Sidebar ---------- */
-[data-testid="stSidebar"] {
-  background-color: #0c1017 !important;
-  border-right: 1px solid var(--border) !important;
-}
-[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-  font-family: 'IBM Plex Sans', sans-serif !important;
-  font-weight: 600 !important;
+/* ---------- Navegación superior ---------- */
+[data-testid="stTopNavLink"]{font-weight:600; letter-spacing:.01em; border-radius:9px;}
+[data-testid="stTopNavLink"][aria-current="page"]{
+  background:rgba(var(--volt-rgb),.09) !important; box-shadow:inset 0 -2px 0 var(--volt);
 }
 
-/* ---------- Métricas: tarjetas MATE (sin blur, sin glow, sin salto) ---------- */
-[data-testid="stMetric"] {
-  background: var(--card) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 12px !important;
-  padding: 16px 18px !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
-  transition: border-color .2s ease, background-color .2s ease !important;
+/* ---------- Controles nativos (retoques; la base viene del tema) ---------- */
+[data-testid="stBaseButton-primary"]{color:var(--on-volt) !important; font-weight:700 !important;}
+[data-testid="stBaseButton-primary"] p{color:var(--on-volt) !important;}
+[data-testid="stBaseButton-primary"]:hover{filter:brightness(1.07);}
+[data-testid="stBaseButton-secondary"]{font-weight:600 !important;}
+[data-testid="stBaseButton-secondary"]:hover{border-color:rgba(var(--volt-rgb),.6) !important;}
+[data-testid="stBaseButton-segmented_control"],
+[data-testid="stBaseButton-segmented_controlActive"],
+[data-testid="stBaseButton-pills"],[data-testid="stBaseButton-pillsActive"]{font-weight:600 !important;}
+[data-testid="stTabs"] button[role="tab"] p{font-weight:600; font-size:.92rem;}
+[data-testid="stExpander"] details{background:var(--surface); border-color:var(--line) !important;}
+[data-testid="stWidgetLabel"] p{font-size:.78rem !important; letter-spacing:.06em; text-transform:uppercase; color:var(--muted) !important; font-weight:600 !important;}
+[data-testid="stCaptionContainer"]{color:var(--muted) !important;}
+[data-testid="stDialog"] [role="dialog"]{background:var(--surface) !important; border:1px solid var(--line-2);}
+/* Enlaces de página del contenido como botones-tarjeta */
+[data-testid="stMainBlockContainer"] [data-testid="stPageLink-NavLink"]{
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
+  padding:10px 14px; min-height:46px; transition:border-color .2s var(--ease), background-color .2s var(--ease);}
+[data-testid="stMainBlockContainer"] [data-testid="stPageLink-NavLink"]:hover{
+  border-color:rgba(var(--volt-rgb),.55); background:var(--surface-2);}
+[data-testid="stMainBlockContainer"] [data-testid="stPageLink-NavLink"] p{font-weight:600;}
+/* Tarjeta de selección del analizador */
+.st-key-an_form{background:var(--surface);}
+:focus-visible{outline:2px solid var(--volt) !important; outline-offset:2px;}
+::-webkit-scrollbar{width:8px; height:8px;}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1); border-radius:99px;}
+::-webkit-scrollbar-thumb:hover{background:rgba(var(--volt-rgb),.5);}
+
+/* ---------- Tipografía propia ---------- */
+.ss{font-family:var(--f-ui); color:var(--text);}
+.ss *{box-sizing:border-box;}
+.ss h1, .ss h2, .ss h3{padding:0; line-height:inherit;}
+.ss table, .ss th, .ss td{border:0;}
+.ss-num{font-variant-numeric:tabular-nums;}
+.ss-muted{color:var(--muted);}
+
+/* ---------- Cabecera de página ---------- */
+.ss-ph{margin:.1rem 0 .4rem;}
+.ss-eyebrow{display:flex; align-items:center; gap:9px; font:700 .72rem/1 var(--f-ui);
+  letter-spacing:.16em; text-transform:uppercase; color:var(--accent);}
+.ss-eyebrow::before{content:""; width:22px; height:2px; border-radius:2px; background:var(--accent);}
+.ss-title{font:800 clamp(2.1rem,5.2vw,3.35rem)/.92 var(--f-display); text-transform:uppercase;
+  letter-spacing:.005em; color:var(--text); margin:.45rem 0 .5rem; padding:0 !important;}
+.ss-sub{color:var(--text-2); font-size:1rem; line-height:1.55; max-width:64ch; margin:0;}
+
+/* ---------- Secciones ---------- */
+.ss-sec{display:flex; align-items:flex-end; justify-content:space-between; gap:12px;
+  border-bottom:1px solid var(--line); padding-bottom:.5rem; margin:1.5rem 0 .2rem;}
+.ss-sec h2{font:800 1.45rem/1 var(--f-display); text-transform:uppercase; letter-spacing:.02em;
+  margin:0; padding:0; color:var(--text);}
+.ss-sec .note{color:var(--muted); font-size:.8rem; text-align:right;}
+
+/* ---------- KPIs ---------- */
+.ss-kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:10px;}
+@media (max-width:420px){ .ss-kpi-v{font-size:2rem;} .ss-kpi{min-height:100px; padding:12px 13px;} }
+.ss-kpi{position:relative; overflow:hidden; background:var(--surface); border:1px solid var(--line);
+  border-radius:var(--r-md); padding:14px 16px 13px; min-height:112px;}
+.ss-kpi::after{content:""; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--accent); opacity:.7;}
+.ss-kpi-l{font:700 .68rem/1.25 var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--muted);}
+.ss-kpi-v{font:800 2.3rem/1 var(--f-display); color:var(--text); margin-top:10px; letter-spacing:.01em;}
+.ss-kpi-s{font-size:.78rem; color:var(--text-2); margin-top:7px; line-height:1.35;}
+.ss-kpi svg.spark{position:absolute; right:12px; bottom:14px; opacity:.95;}
+.ss-kpi{container-type:inline-size;}
+.ss-kpi.has-spark .ss-kpi-v, .ss-kpi.has-spark .ss-kpi-s{max-width:calc(100% - 94px);}
+@container (max-width:240px){
+  .ss-kpi svg.spark{display:none;}
+  .ss-kpi.has-spark .ss-kpi-v, .ss-kpi.has-spark .ss-kpi-s{max-width:none;}
 }
-[data-testid="stMetric"]:hover {
-  border-color: rgba(var(--accent-rgb), 0.45) !important;
-  background: var(--card-2) !important;
-}
-[data-testid="stMetricLabel"] {
-  color: var(--muted) !important;
-  font-size: 0.72rem !important;
-  font-weight: 500 !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.06em !important;
-}
-[data-testid="stMetricValue"] {
-  font-weight: 600 !important;
-  color: #ffffff !important;
-  font-size: 1.55rem !important;
+.ss-delta{display:inline-flex; align-items:center; gap:4px; font-weight:600;}
+.ss-delta.up{color:var(--good);} .ss-delta.down{color:var(--bad);} .ss-delta.flat{color:var(--text-2);}
+.ss-delta.warn{color:var(--warn);}
+
+/* ---------- Chips / pills ---------- */
+.ss-pill{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:99px;
+  font:600 .74rem/1.2 var(--f-ui); white-space:nowrap; border:1px solid transparent;}
+.ss-pill.neutral{background:rgba(255,255,255,.06); color:var(--text-2); border-color:var(--line);}
+.ss-pill.accent{background:rgba(var(--accent-rgb),.14); color:var(--text); border-color:rgba(var(--accent-rgb),.35);}
+.ss-pill.good{background:rgba(53,196,106,.14); color:#8be0ab;}
+.ss-pill.warn{background:rgba(245,184,61,.14); color:#f6cf7e;}
+.ss-pill.bad{background:rgba(229,72,77,.15); color:#f3a2a4;}
+.ss-pill.live{background:rgba(229,72,77,.16); color:#ffb4b6;}
+.ss-pill.live::before{content:""; width:7px; height:7px; border-radius:50%; background:var(--bad);
+  animation:ss-pulse 1.4s ease-in-out infinite;}
+.ss-dot{display:inline-block; width:9px; height:9px; border-radius:3px; flex:none;}
+.ss-chips{display:flex; flex-wrap:wrap; gap:6px; margin:.35rem 0 .2rem;}
+
+/* ---------- Avisos ---------- */
+.ss-note{display:flex; gap:10px; align-items:flex-start; padding:11px 14px; border-radius:var(--r-md);
+  border:1px solid var(--line); background:var(--surface); color:var(--text-2); font-size:.87rem; line-height:1.5;}
+.ss-note svg{flex:none; margin-top:2px;}
+.ss-note.warn{border-color:rgba(245,184,61,.3); background:rgba(245,184,61,.06);}
+.ss-note.bad{border-color:rgba(229,72,77,.3); background:rgba(229,72,77,.06);}
+.ss-note.info{border-color:rgba(77,156,248,.28); background:rgba(77,156,248,.06);}
+.ss-note b{color:var(--text);}
+.ss-notes{display:grid; gap:8px;}
+
+/* ---------- Marcador del enfrentamiento (scorebug) ---------- */
+.ss-bug{position:relative; overflow:hidden; border-radius:var(--r-lg); border:1px solid var(--line);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(var(--accent-rgb),.16), transparent 55%),
+    radial-gradient(120% 140% at 100% 0%, rgba(195,206,221,.07), transparent 55%),
+    var(--surface);
+  padding:16px 20px 16px;}
+.ss-bug::before{content:""; position:absolute; left:0; right:0; top:0; height:3px;
+  background:linear-gradient(90deg, var(--accent) 0%, rgba(var(--accent-rgb),.25) 50%, var(--away) 100%);}
+.ss-bug-meta{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;
+  font:700 .7rem/1.3 var(--f-ui); letter-spacing:.12em; text-transform:uppercase; color:var(--muted);}
+.ss-bug-grid{display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:end;
+  gap:14px; margin-top:14px;}
+.ss-side{display:flex; flex-direction:column; gap:6px; min-width:0;}
+.ss-side.away{align-items:flex-end; text-align:right;}
+.ss-crest{width:44px; height:44px; object-fit:contain; margin-bottom:2px;}
+.ss-name{font:800 clamp(1.15rem,2.7vw,1.95rem)/1.02 var(--f-display); text-transform:uppercase;
+  color:var(--text); overflow-wrap:anywhere;}
+.ss-role{display:flex; align-items:center; gap:7px; font:600 .7rem/1 var(--f-ui); letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted);}
+.ss-side.away .ss-role{flex-direction:row-reverse;}
+.ss-big{font:800 clamp(2.6rem,7vw,4.3rem)/.86 var(--f-display); color:var(--text); letter-spacing:-.01em;}
+.ss-big small{font-size:.42em; color:var(--muted); margin-left:2px; letter-spacing:0;}
+.ss-mid{display:flex; flex-direction:column; align-items:center; gap:6px; padding-bottom:6px;}
+.ss-vs{font:800 .82rem/1 var(--f-display); letter-spacing:.24em; color:var(--muted);
+  border:1px solid var(--line-2); border-radius:99px; padding:6px 12px 6px 14px;}
+.ss-draw{font:800 1.9rem/1 var(--f-display); color:var(--text-2);}
+.ss-draw-l{font:600 .66rem/1 var(--f-ui); letter-spacing:.12em; text-transform:uppercase; color:var(--muted);}
+.ss-bar{display:flex; gap:2px; height:10px; margin:16px 0 10px;}
+.ss-bar > span{display:block; height:100%; min-width:3px; border-radius:2px;
+  transform-origin:left center; animation:ss-grow .8s var(--ease) both;}
+.ss-bar > span:first-child{border-radius:4px 2px 2px 4px;}
+.ss-bar > span:last-child{border-radius:2px 4px 4px 2px;}
+.ss-bug-foot{display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:14px;
+  font-size:.8rem; color:var(--text-2);}
+.ss-bug-foot .r{text-align:right;}
+.ss-bug-foot b{color:var(--text); font-weight:700;}
+.ss-odds{font-family:var(--f-mono); font-size:.76rem; color:var(--muted);}
+.ss-exp{display:flex; flex-wrap:wrap; gap:8px 18px; margin-top:12px; padding-top:12px;
+  border-top:1px solid var(--line); font-size:.82rem; color:var(--text-2);}
+.ss-exp b{font:800 1.15rem/1 var(--f-display); color:var(--text); margin-left:4px; letter-spacing:.02em;}
+@media (max-width:560px){
+  .ss-bug{padding:14px 14px 14px;}
+  .ss-bug-grid{gap:8px;}
+  .ss-crest{width:34px; height:34px;}
+  .ss-vs{padding:5px 8px 5px 10px; font-size:.72rem;}
+  .ss-draw{font-size:1.45rem;}
 }
 
-/* ---------- Tablas ---------- */
-[data-testid="stDataFrame"] {
-  border: 1px solid var(--border) !important;
-  border-radius: 12px !important;
-  overflow: hidden !important;
-}
-div[data-testid="stTable"] table {
-  background-color: var(--card) !important;
-  border-radius: 12px !important;
-  overflow: hidden !important;
-  border: 1px solid var(--border) !important;
-}
-div[data-testid="stTable"] th {
-  background-color: rgba(255, 255, 255, 0.025) !important;
-  color: var(--muted) !important;
-  font-weight: 600 !important;
-  padding: 11px 15px !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
-  text-transform: uppercase !important;
-  font-size: .72rem !important;
-  letter-spacing: .05em !important;
-}
-div[data-testid="stTable"] td {
-  padding: 11px 15px !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
-  color: var(--text) !important;
-}
-
-/* ---------- Botones: mate (sin glow, sin transform) ---------- */
-.stButton>button, [data-testid="stFormSubmitButton"] button {
-  border-radius: 8px !important;
-  font-weight: 600 !important;
-  font-family: 'IBM Plex Sans', sans-serif !important;
-  border: 1px solid rgba(var(--accent-rgb), 0.35) !important;
-  background: rgba(var(--accent-rgb), 0.10) !important;
-  color: var(--accent) !important;
-  transition: background-color .2s ease, border-color .2s ease, color .2s ease !important;
-  padding: 9px 18px !important;
-}
-.stButton>button:hover, [data-testid="stFormSubmitButton"] button:hover {
-  background: rgba(var(--accent-rgb), 0.20) !important;
-  border-color: var(--accent) !important;
-  color: #ffffff !important;
+/* ---------- Lista de situaciones (ranking) ---------- */
+.ss-list{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden;}
+.ss-li{display:grid; grid-template-columns:30px minmax(0,1fr) minmax(90px,.7fr) 68px;
+  grid-template-areas:"rank name meter pct"; align-items:center; gap:4px 14px;
+  padding:11px 16px; border-top:1px solid var(--line);
+  animation:ss-rise .45s var(--ease) both;}
+.ss-li:first-child{border-top:0;}
+.ss-li:nth-child(2){animation-delay:.03s} .ss-li:nth-child(3){animation-delay:.06s}
+.ss-li:nth-child(4){animation-delay:.09s} .ss-li:nth-child(5){animation-delay:.12s}
+.ss-li:nth-child(n+6){animation-delay:.15s}
+.ss-rank{grid-area:rank; font:800 1.1rem/1 var(--f-display); color:var(--muted); text-align:center;}
+.ss-li-name{grid-area:name; min-width:0;}
+.ss-li-name .n{color:var(--text); font-weight:600; font-size:.93rem; line-height:1.3;}
+.ss-li-name .g{color:var(--muted); font-size:.68rem; letter-spacing:.08em; text-transform:uppercase; margin-top:3px;}
+.ss-meter{grid-area:meter; position:relative; height:6px; border-radius:99px; background:rgba(255,255,255,.07);}
+.ss-meter > i{position:absolute; left:0; top:0; bottom:0; border-radius:99px; background:var(--accent);
+  transform-origin:left center; animation:ss-grow .7s var(--ease) both;}
+.ss-meter > b{position:absolute; left:50%; top:-3px; width:1px; height:12px; background:rgba(255,255,255,.2);}
+.ss-li-p{grid-area:pct; text-align:right;}
+.ss-li-p .p{font:800 1.2rem/1 var(--f-display); color:var(--text); letter-spacing:.02em;}
+.ss-li-p .o{font-family:var(--f-mono); font-size:.7rem; color:var(--muted); margin-top:3px;}
+@media (max-width:600px){
+  .ss-li{grid-template-columns:24px minmax(0,1fr) 62px;
+    grid-template-areas:"rank name pct" ". meter meter"; padding:10px 12px;}
+  .ss-li .ss-meter{margin-top:6px;}
 }
 
-/* ---------- Inputs ---------- */
-input, textarea, select, div[data-baseweb="select"] {
-  border-radius: 8px !important;
-  border: 1px solid var(--border) !important;
-  background: #0c1017 !important;
-  color: #eef1f6 !important;
-}
-div[data-baseweb="select"] > div { background-color: #0c1017 !important; color: #eef1f6 !important; }
-[data-testid="stNumberInput"] input { font-family: 'IBM Plex Mono', monospace !important; }
+/* ---------- Mercados agrupados ---------- */
+.ss-groups{display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px;}
+.ss-group{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); padding:12px 14px 6px;}
+.ss-group h3{display:flex; justify-content:space-between; align-items:center; gap:8px;
+  font:800 1.02rem/1 var(--f-display); text-transform:uppercase; letter-spacing:.04em;
+  color:var(--text-2); margin:0 0 6px; padding:0;}
+.ss-group h3 span{font:600 .64rem/1 var(--f-ui); letter-spacing:.08em; color:var(--muted);}
+.ss-mrow{display:grid; grid-template-columns:minmax(0,1fr) 54px 44px; gap:4px 10px; align-items:center;
+  padding:7px 0 8px; border-top:1px solid var(--line);}
+.ss-mrow:first-of-type{border-top:0;}
+.ss-mrow .n{font-size:.86rem; color:var(--text); line-height:1.3;}
+.ss-mrow .n em{font-style:normal; color:var(--muted); font-size:.72rem;}
+.ss-mrow .p{font:700 .92rem/1 var(--f-ui); font-variant-numeric:tabular-nums; text-align:right; color:var(--text);}
+.ss-mrow .o{font-family:var(--f-mono); font-size:.72rem; color:var(--muted); text-align:right;}
+.ss-mrow .m{grid-column:1/-1; height:3px; border-radius:99px; background:rgba(255,255,255,.06); position:relative;}
+.ss-mrow .m i{position:absolute; left:0; top:0; bottom:0; border-radius:99px; background:var(--accent); opacity:.85;}
 
-/* ---------- Alertas (mate) ---------- */
-div[data-testid="stInfo"] {
-  background-color: rgba(95, 143, 168, 0.10) !important;
-  color: #a9c3d1 !important; border: 1px solid rgba(95, 143, 168, 0.22) !important; border-radius: 10px !important;
-}
-div[data-testid="stWarning"] {
-  background-color: rgba(179, 152, 92, 0.10) !important;
-  color: #d0bd8a !important; border: 1px solid rgba(179, 152, 92, 0.22) !important; border-radius: 10px !important;
-}
-div[data-testid="stSuccess"] {
-  background-color: rgba(92, 154, 133, 0.10) !important;
-  color: #96c3b2 !important; border: 1px solid rgba(92, 154, 133, 0.22) !important; border-radius: 10px !important;
-}
-div[data-testid="stError"] {
-  background-color: rgba(176, 96, 96, 0.10) !important;
-  color: #d19a9a !important; border: 1px solid rgba(176, 96, 96, 0.22) !important; border-radius: 10px !important;
-}
+/* ---------- Comparativa equipo vs equipo ---------- */
+.ss-cmp{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); padding:6px 16px;}
+.ss-cmp-row{display:grid; grid-template-columns:minmax(64px,auto) minmax(0,1fr) minmax(64px,auto);
+  gap:6px 14px; align-items:center; padding:10px 0; border-top:1px solid var(--line);}
+.ss-cmp-row:first-child{border-top:0;}
+.ss-cmp-row .v{font:800 1.2rem/1 var(--f-display); color:var(--text); letter-spacing:.02em;}
+.ss-cmp-row .v.r{text-align:right;}
+.ss-cmp-row .c{text-align:center;}
+.ss-cmp-row .c .l{font:600 .68rem/1.2 var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--muted);}
+.ss-cmp-row .split{display:flex; gap:2px; height:5px; margin-top:7px;}
+.ss-cmp-row .split span{display:block; height:100%; border-radius:2px;}
 
-/* ---------- Sliders ---------- */
-.stSlider [data-testid="stSliderTickBar"] { background-color: rgba(255, 255, 255, 0.05) !important; }
-.stSlider [role="slider"] { background-color: var(--accent) !important; border: 2px solid #0a0d13 !important; }
+/* ---------- Forma (últimos resultados) ---------- */
+.ss-form{display:inline-flex; gap:4px;}
+.ss-form span{width:22px; height:22px; border-radius:6px; display:grid; place-items:center;
+  font:700 .7rem/1 var(--f-ui);}
+.ss-form .G{background:rgba(53,196,106,.18); color:#8be0ab;}
+.ss-form .E{background:rgba(138,149,168,.2); color:#cdd5e0;}
+.ss-form .P{background:rgba(229,72,77,.18); color:#f3a2a4;}
 
-/* ---------- Chrome ---------- */
-#MainMenu, [data-testid="stDecoration"] { visibility: hidden; }
-footer { display: none; }
-/* Oculta el nav automático ("streamlit app"); usamos uno de marca (sidebar_nav). */
-[data-testid="stSidebarNav"] { display: none; }
+/* ---------- Tarjeta de equipo ---------- */
+.ss-team{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); padding:14px 16px;}
+.ss-team-h{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;}
+.ss-team-h .t{display:flex; align-items:center; gap:9px; font:800 1.35rem/1 var(--f-display);
+  text-transform:uppercase; color:var(--text);}
+.ss-stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(92px,1fr)); gap:8px; margin-top:12px;}
+.ss-stat{background:var(--surface-2); border-radius:var(--r-sm); padding:9px 11px;}
+.ss-stat .l{font:600 .64rem/1.2 var(--f-ui); letter-spacing:.09em; text-transform:uppercase; color:var(--muted);}
+.ss-stat .v{font:800 1.3rem/1 var(--f-display); color:var(--text); margin-top:6px; letter-spacing:.02em;}
 
-/* ---------- Scrollbars ---------- */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: rgba(10, 13, 19, 0.6); }
-::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 99px; }
-::-webkit-scrollbar-thumb:hover { background: var(--accent); }
-
-/* ---------- Expanders (mate) ---------- */
-[data-testid="stExpander"] {
-  border: 1px solid var(--border) !important; border-radius: 12px !important;
-  background: var(--card) !important; overflow: hidden !important;
-}
-[data-testid="stExpander"] summary {
-  font-family: 'IBM Plex Sans', sans-serif !important; font-weight: 600 !important;
-  padding: 12px 16px !important; transition: color .2s ease !important;
-}
-[data-testid="stExpander"] summary:hover { color: var(--accent) !important; }
-
-/* ---------- Radio como segmentos ---------- */
-[data-testid="stRadio"] [role="radiogroup"] { gap: .4rem !important; }
-[data-testid="stRadio"] [role="radiogroup"] > label {
-  border: 1px solid var(--border) !important; border-radius: 8px !important;
-  padding: 7px 12px !important; margin: 0 !important;
-  transition: background-color .2s ease, border-color .2s ease !important;
-}
-[data-testid="stRadio"] [role="radiogroup"] > label:hover {
-  border-color: rgba(var(--accent-rgb), 0.45) !important; background: rgba(var(--accent-rgb), 0.08) !important;
-}
-
-/* ---------- Tabs ---------- */
-button[data-baseweb="tab"] { font-family: 'IBM Plex Sans', sans-serif !important; font-weight: 600 !important; }
-[data-baseweb="tab-highlight"] { background: var(--accent) !important; }
-
-/* ---------- Divisores ---------- */
-hr { border: none !important; height: 1px !important; background: var(--border) !important; }
-
-/* ---------- Dropdown de selects ---------- */
-ul[role="listbox"] { background: #0c1017 !important; border: 1px solid var(--border) !important; border-radius: 10px !important; }
-li[role="option"]:hover { background: rgba(var(--accent-rgb), 0.10) !important; }
-
-/* ---------- Enlaces ---------- */
-.stApp a { color: var(--accent) !important; text-decoration: none !important; }
-.stApp a:hover { text-decoration: underline !important; }
-
-/* ---------- Foco accesible (WCAG) — consistente en todos los controles ---------- */
-:focus-visible { outline: 2px solid var(--accent) !important; outline-offset: 3px !important; }
-.stButton>button:focus-visible, [data-testid="stFormSubmitButton"] button:focus-visible,
-input:focus-visible, textarea:focus-visible, select:focus-visible,
-[role="option"]:focus-visible, [data-baseweb="select"]:focus-within {
-  outline: 2px solid var(--accent) !important; outline-offset: 3px !important;
-}
-
-/* ---------- Encabezados de sección con icono SVG (componente section_header) ---------- */
-.ss-sec {
-  display: flex; align-items: center; gap: 9px; margin: 1.7rem 0 .75rem;
-  font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; font-size: .95rem;
-  color: #eef1f6; letter-spacing: .005em;
-}
-.ss-sec svg { color: var(--accent); flex: none; }
-
-/* Markdown headers residuales: marcador de acento sobrio */
-.stApp h3, .stApp h4 { border-left: 2px solid var(--accent) !important; padding-left: 11px !important; margin-top: 1.5rem !important; }
-
-/* ---------- Skeletons (carga percibida) ---------- */
-@keyframes ss-shimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
-.ss-skel {
-  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.09) 37%,
-             rgba(255,255,255,0.04) 63%);
-  background-size: 800px 100%; animation: ss-shimmer 1.4s infinite linear; border-radius: 6px;
-}
-
-/* ===================== RESPONSIVE ===================== */
+/* ---------- Tabla responsiva (tarjetas en móvil) ---------- */
+.ss-tablewrap{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden;}
+.ss-table{width:100%; border-collapse:collapse; font-size:.86rem;}
+.ss-table th{font:700 .66rem/1.2 var(--f-ui); letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
+  text-align:left; padding:11px 14px; background:rgba(255,255,255,.02); border-bottom:1px solid var(--line);}
+.ss-table td{padding:10px 14px; border-top:1px solid var(--line); color:var(--text); vertical-align:middle;}
+.ss-table tr:first-child td{border-top:0;}
+.ss-table .num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
+.ss-table th.num{text-align:right;}
+.ss-table .dim{color:var(--muted);}
 @media (max-width:640px){
-  .block-container, [data-testid="stMainBlockContainer"]{ padding:1.2rem 1rem 3rem; }
-  [data-testid="stHorizontalBlock"]{ flex-wrap:wrap; gap:.75rem; }
-  [data-testid="stHorizontalBlock"] > div{ flex:1 1 100% !important; min-width:100% !important; }
-  .stApp h1{ font-size:1.7rem; }
-  [data-testid="stMetricValue"]{ font-size:1.3rem; }
-  /* Cabecera de página compacta en móvil (recupera área útil). */
-  .ss-ph{ margin:2px 0 10px !important; gap:10px !important; }
-  .ss-ph-ico{ width:34px !important; height:34px !important; }
-  .ss-ph-ico svg{ width:18px !important; height:18px !important; }
-  .ss-ph-title{ font-size:1.2rem !important; }
+  .ss-table thead{display:none;}
+  .ss-table, .ss-table tbody, .ss-table tr, .ss-table td{display:block; width:100%;}
+  .ss-table tr{padding:10px 14px; border-top:1px solid var(--line);}
+  .ss-table tr:first-child{border-top:0;}
+  .ss-table td{border:0; padding:3px 0; display:flex; justify-content:space-between; align-items:center;
+    gap:14px; text-align:right;}
+  .ss-table td::before{content:attr(data-label); color:var(--muted); font:600 .66rem/1.2 var(--f-ui);
+    letter-spacing:.08em; text-transform:uppercase; text-align:left; flex:none;}
+  .ss-table td.lead{font-weight:700; font-size:.95rem; padding-bottom:6px; text-align:left;}
+  .ss-table td.lead::before{display:none;}
 }
-@media (prefers-reduced-motion: reduce){ *{ transition:none !important; animation:none !important; } }
+
+/* ---------- Tarjeta de partido (agenda) ---------- */
+.ss-fx{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
+  padding:13px 14px 12px; position:relative; overflow:hidden;}
+.ss-fx::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--accent); opacity:.55;}
+.ss-fx.live::before{background:var(--bad); opacity:1;}
+.ss-fx-top{display:flex; justify-content:space-between; align-items:center; gap:8px;
+  font:700 .7rem/1 var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--muted);}
+.ss-fx-top .time{font:800 1.05rem/1 var(--f-display); letter-spacing:.04em; color:var(--text);}
+.ss-fx-row{display:grid; grid-template-columns:24px minmax(0,1fr) auto; gap:10px; align-items:center; margin-top:10px;}
+.ss-fx-row img{width:24px; height:24px; object-fit:contain;}
+.ss-fx-row .ph{width:24px; height:24px; border-radius:6px; background:var(--surface-3);}
+.ss-fx-row .tn{font-weight:600; font-size:.95rem; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.ss-fx-row .tp{font:800 1.25rem/1 var(--f-display); color:var(--text);}
+.ss-fx-row .sc{font:800 1.3rem/1 var(--f-display); color:var(--text); min-width:18px; text-align:right;}
+.ss-fx .ss-bar{height:6px; margin:12px 0 6px;}
+.ss-fx-foot{display:flex; justify-content:space-between; gap:8px; font-size:.72rem; color:var(--muted);}
+
+/* ---------- Tarjetas de deporte (inicio) ---------- */
+.ss-sport{position:relative; overflow:hidden; border-radius:var(--r-lg); border:1px solid var(--line);
+  padding:16px 16px 14px; min-height:150px;
+  background:radial-gradient(130% 120% at 100% 0%, rgba(var(--c),.22), transparent 60%), var(--surface);}
+.ss-sport .k{font:700 .68rem/1 var(--f-ui); letter-spacing:.14em; text-transform:uppercase; color:rgb(var(--c));}
+.ss-sport .t{font:800 2rem/1 var(--f-display); text-transform:uppercase; color:var(--text); margin-top:8px;}
+.ss-sport .d{font-size:.82rem; color:var(--text-2); margin-top:8px; line-height:1.45;}
+.ss-sport .f{display:flex; gap:14px; flex-wrap:wrap; margin-top:12px; font-size:.75rem; color:var(--muted);}
+.ss-sport .f b{color:var(--text); font-weight:700;}
+
+/* ---------- Resumen del día ---------- */
+.ss-sums{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px;}
+.ss-sum{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); padding:13px 14px 12px;}
+.ss-sum.ok{box-shadow:inset 3px 0 0 var(--good);} .ss-sum.ko{box-shadow:inset 3px 0 0 var(--bad);}
+.ss-sum-h{display:flex; justify-content:space-between; align-items:flex-start; gap:10px;}
+.ss-sum-h .s{font:700 .66rem/1 var(--f-ui); letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-bottom:7px;}
+.ss-sum-h .m{font-weight:700; font-size:.96rem; color:var(--text); line-height:1.3; overflow-wrap:anywhere;}
+.ss-sum-h .m b{font:800 1.15rem/1 var(--f-display); margin:0 6px; letter-spacing:.03em;}
+.ss-sum-rate{font:800 1.6rem/1 var(--f-display); color:var(--text); white-space:nowrap;}
+.ss-sum-rate small{font-size:.5em; color:var(--muted); margin-left:1px;}
+.ss-sum ul{list-style:none; margin:11px 0 0; padding:0; display:grid; gap:6px;}
+.ss-sum li{display:grid; grid-template-columns:18px minmax(0,1fr) auto; gap:9px; align-items:center;
+  font-size:.84rem; color:var(--text-2); line-height:1.3;}
+.ss-sum li .i{width:18px; height:18px; border-radius:5px; display:grid; place-items:center; font:800 .68rem/1 var(--f-ui);}
+.ss-sum li.h .i{background:rgba(53,196,106,.18); color:#8be0ab;}
+.ss-sum li.x .i{background:rgba(229,72,77,.18); color:#f3a2a4;}
+.ss-sum li.p .i{background:rgba(138,149,168,.18); color:#cdd5e0;}
+.ss-sum li .pr{font-variant-numeric:tabular-nums; color:var(--muted); font-size:.76rem;}
+.ss-sum li.main .n{color:var(--text); font-weight:600;}
+.ss-sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap;}
+
+/* ---------- Calibración (real − prometido) ---------- */
+.ss-gap{display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:150px;}
+.ss-gap .v{font-variant-numeric:tabular-nums; font-weight:600; min-width:64px; text-align:right;}
+.ss-gap .t{position:relative; flex:1; max-width:120px; height:6px; border-radius:99px; background:rgba(255,255,255,.06);}
+.ss-gap .t i{position:absolute; top:0; bottom:0; border-radius:99px;}
+.ss-gap .t b{position:absolute; left:50%; top:-3px; width:1px; height:12px; background:rgba(255,255,255,.35);}
+
+/* ---------- Estado vacío ---------- */
+.ss-empty{text-align:center; padding:38px 22px; border:1px dashed var(--line-2); border-radius:var(--r-lg);
+  background:rgba(255,255,255,.012);}
+.ss-empty .t{font:800 1.35rem/1.1 var(--f-display); text-transform:uppercase; color:var(--text); margin-top:10px;}
+.ss-empty .d{color:var(--text-2); font-size:.9rem; line-height:1.55; max-width:52ch; margin:8px auto 0;}
+
+/* ---------- Pie ---------- */
+.ss-foot{margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--line); color:var(--muted);
+  font-size:.76rem; line-height:1.6; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;}
+
+/* ---------- Movimiento ---------- */
+@keyframes ss-grow{from{transform:scaleX(0)} to{transform:scaleX(1)}}
+@keyframes ss-rise{from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none}}
+@keyframes ss-pulse{0%,100%{opacity:1} 50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none !important; transition:none !important;}
+}
 </style>
 """
 
-# Paleta MATE por deporte (acentos apagados/terrosos, no vibrantes).
-_THEMES = {
-    "football":   {"accent": "#5c9a85", "rgb": "92, 154, 133"},
-    "basketball": {"accent": "#bd8560", "rgb": "189, 133, 96"},
-    "tennis":     {"accent": "#b3985c", "rgb": "179, 152, 92"},
-    "baseball":   {"accent": "#5f8fa8", "rgb": "95, 143, 168"},
-}
+
+def _minify(css: str) -> str:
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    css = re.sub(r"\s+", " ", css)
+    return re.sub(r"\s*([{};])\s*", r"\1", css).strip()
 
 
-def _theme_key(sport: str) -> str:
-    key = str(sport).lower()
-    if any(w in key for w in ("futbol", "fútbol", "soccer", "football")):
-        return "football"
-    if any(w in key for w in ("baloncesto", "basket", "nba")):
-        return "basketball"
-    if any(w in key for w in ("tenis", "tennis")):
-        return "tennis"
-    if any(w in key for w in ("béisbol", "beisbol", "baseball", "mlb")):
-        return "baseball"
-    return "football"
+_CSS_MIN = _minify(_CSS)
 
 
-def inject_theme(sport: str = "football") -> None:
-    """Inyecta el tema mate. El bloque grande de CSS es ESTÁTICO (usa var(--accent)),
-    y solo se sobreescribe el ACENTO por deporte con un override minúsculo. Así, al
-    alternar deportes, el navegador no re-parsea toda la hoja de estilos: cambia dos
-    variables CSS y repinta al instante -> sin flicker/CLS (Layout Shift)."""
-    t = _THEMES[_theme_key(sport)]
-    st.markdown(_THEME_CSS, unsafe_allow_html=True)
-    st.markdown(
-        f"<style>:root{{--accent:{t['accent']};--accent-rgb:{t['rgb']};}}</style>",
-        unsafe_allow_html=True,
-    )
+def inject_base_css() -> None:
+    st.html(_CSS_MIN)
 
 
-# ======================================================================
-#  Iconos SVG (Lucide) — reemplazan a los emojis para dar formalidad
-# ======================================================================
+def set_accent(sport: str | None) -> None:
+    meta = SPORTS.get(sport or "", BRAND)
+    st.html(f"<style>:root{{--accent:{meta['accent']};--accent-rgb:{meta['rgb']};}}</style>")
+
+
+def render(markup: str) -> None:
+    st.html(f"<div class='ss'>{markup}</div>")
+
+
 _ICONS = {
-    "search":     '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
-    "chart":      '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
-    "trophy":     '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>',
-    "target":     '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
-    "list":       '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
-    "star":       '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
-    "trending":   '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
-    "sliders":    '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
-    "scale":      '<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>',
-    "lock":       '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
-    "activity":   '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
-    "info":       '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
-    "alert":      '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
-    "medal":      '<path d="M7.21 15 2.66 7.14a2 2 0 0 1 .13-2.2L4.4 2.8A2 2 0 0 1 6 2h12a2 2 0 0 1 1.6.8l1.6 2.14a2 2 0 0 1 .14 2.2L16.79 15"/><path d="M11 12 5.44 2.63"/><path d="m13 12 5.56-9.37"/><path d="M8 7h8"/><circle cx="12" cy="17" r="5"/><path d="M12 18v-2h-.5"/>',
-    "refresh":    '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
-    "bot":        '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
-    "check":      '<path d="M20 6 9 17l-5-5"/>',
-    "calendar":   '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
-    "clock":      '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
-    "percent":    '<line x1="19" x2="5" y1="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
-    "coins":      '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/>',
-    "layout":     '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
-    "x":          '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
-}
-
-# Colores de estado (mate): positivo / negativo / neutro. (rgb, texto)
-_PILL_COLORS = {
-    "pos":     ("92, 154, 133", "#96c3b2"),
-    "neg":     ("176, 96, 96", "#d99a9a"),
-    "neutral": ("147, 158, 174", "#c2cad6"),
-    "accent":  ("var(--accent-rgb)", "var(--accent)"),
+    "info": '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+    "alert": '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    "check": '<path d="M20 6 9 17l-5-5"/>',
+    "x": '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    "calendar": '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+    "clock": '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    "chart": '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+    "target": '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+    "trending": '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
+    "database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
+    "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    "bot": '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+    "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
 }
 
 
-def icon(name: str, size: int = 18, color: str = "currentColor", stroke: float = 1.75) -> str:
-    """Devuelve el markup SVG de un icono Lucide (24x24). Uso inline en HTML."""
-    inner = _ICONS.get(name, _ICONS["chart"])
+def icon(name: str, size: int = 16, color: str = "currentColor", stroke: float = 2.0) -> str:
+    inner = _ICONS.get(name, _ICONS["info"])
     return (f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
             f'stroke="{color}" stroke-width="{stroke}" stroke-linecap="round" '
-            f'stroke-linejoin="round" style="vertical-align:middle;flex:none">{inner}</svg>')
+            f'stroke-linejoin="round" aria-hidden="true">{inner}</svg>')
 
 
-def section_header(title: str, name: str = "chart") -> None:
-    """Encabezado de sección: icono SVG de acento + título (sin emojis)."""
-    st.markdown(
-        f'<div class="ss-sec">{icon(name, 17, "var(--accent)")}'
-        f'<span>{html.escape(str(title))}</span></div>',
-        unsafe_allow_html=True,
-    )
+def page_header(title: str, subtitle: str = "", eyebrow: str = "") -> None:
+    eb = f"<div class='ss-eyebrow'>{esc(eyebrow)}</div>" if eyebrow else ""
+    sub = f"<p class='ss-sub'>{esc(subtitle)}</p>" if subtitle else ""
+    render(f"<header class='ss-ph'>{eb}<h1 class='ss-title'>{esc(title)}</h1>{sub}</header>")
 
 
-# ======================================================================
-#  Marca + componentes del sistema visual (mockups)
-# ======================================================================
-def brand_logo(scale: float = 1.0, stacked: bool = False,
-               color: str = "var(--accent)") -> str:
-    """Wordmark de marca: marca SVG (barras inclinadas tipo ecualizador) + 'SPORT STATISTICS'.
+def section(title: str, note: str = "") -> None:
+    nt = f"<div class='note'>{esc(note)}</div>" if note else ""
+    render(f"<div class='ss-sec'><h2>{esc(title)}</h2>{nt}</div>")
 
-    Devuelve HTML (para inyectar). `stacked` apila SPORT sobre STATISTICS (login/sidebar).
-    """
-    mh = 30 * scale
-    mark = (
-        f"<svg width='{mh * 1.25:.0f}' height='{mh:.0f}' viewBox='0 0 40 32' fill='none' "
-        f"style='flex:none'><g transform='skewX(-12)'>"
-        f"<rect x='3'  y='14' width='5' height='14' rx='1.5' fill='{color}' opacity='.45'/>"
-        f"<rect x='11' y='8'  width='5' height='20' rx='1.5' fill='{color}' opacity='.72'/>"
-        f"<rect x='19' y='2'  width='5' height='26' rx='1.5' fill='{color}'/>"
-        f"<rect x='27' y='11' width='5' height='17' rx='1.5' fill='{color}' opacity='.58'/>"
-        f"</g></svg>"
-    )
-    fs = 1.1 * scale
-    if stacked:
-        word = (
-            "<div style='display:flex;flex-direction:column;line-height:1;'>"
-            f"<span style=\"font-family:'IBM Plex Sans',sans-serif;font-weight:600;color:#fff;"
-            f"font-size:{fs:.2f}rem;letter-spacing:.16em;\">SPORT</span>"
-            f"<span style=\"font-family:'IBM Plex Sans',sans-serif;font-weight:400;color:var(--muted);"
-            f"font-size:{fs * 0.9:.2f}rem;letter-spacing:.22em;margin-top:3px;\">STATISTICS</span></div>"
-        )
+
+def notice(text: str, tone: str = "info", title: str = "") -> str:
+    ic = {"info": ("info", "#4d9cf8"), "warn": ("alert", "#f5b83d"),
+          "bad": ("alert", "#e5484d")}.get(tone, ("info", "#4d9cf8"))
+    head = f"<b>{esc(title)}</b> " if title else ""
+    return (f"<div class='ss-note {esc(tone)}' role='note'>{icon(ic[0], 17, ic[1])}"
+            f"<div>{head}{esc(text)}</div></div>")
+
+
+def notes(items, tone: str = "info") -> None:
+    items = [i for i in (items or []) if i]
+    if items:
+        render("<div class='ss-notes'>" + "".join(notice(t, tone) for t in items) + "</div>")
+
+
+def pill(text: str, tone: str = "neutral", dot_color: str = "") -> str:
+    dot = f"<span class='ss-dot' style='background:{esc(dot_color)}'></span>" if dot_color else ""
+    return f"<span class='ss-pill {esc(tone)}'>{dot}{esc(text)}</span>"
+
+
+def chips(items) -> None:
+    render("<div class='ss-chips'>" + "".join(items) + "</div>")
+
+
+def empty_state(title: str, detail: str = "", icon_name: str = "calendar") -> None:
+    d = f"<div class='d'>{esc(detail)}</div>" if detail else ""
+    render(f"<div class='ss-empty'>{icon(icon_name, 30, 'var(--muted)', 1.6)}"
+           f"<div class='t'>{esc(title)}</div>{d}</div>")
+
+
+def sparkline(values, w: int = 86, h: int = 30) -> str:
+    vals = [float(v) for v in (values or []) if v is not None]
+    if len(vals) < 2:
+        return ""
+    lo, hi = min(vals), max(vals)
+    rng = (hi - lo) or 1.0
+    n = len(vals)
+    pts = [((i / (n - 1)) * (w - 4) + 2, h - 3 - (v - lo) / rng * (h - 6)) for i, v in enumerate(vals)]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = f"2,{h} {line} {w - 2},{h}"
+    ex, ey = pts[-1]
+    return (f"<svg class='spark' width='{w}' height='{h}' viewBox='0 0 {w} {h}' aria-hidden='true'>"
+            f"<polygon points='{area}' fill='var(--accent)' opacity='.10'/>"
+            f"<polyline points='{line}' fill='none' stroke='var(--accent)' stroke-width='2' "
+            f"stroke-linecap='round' stroke-linejoin='round'/>"
+            f"<circle cx='{ex:.1f}' cy='{ey:.1f}' r='3.2' fill='var(--accent)' stroke='var(--surface)' "
+            f"stroke-width='2'/></svg>")
+
+
+def kpis(items) -> None:
+    cells = []
+    for it in items:
+        delta = ""
+        if it.get("delta"):
+            d = it.get("delta_dir", "flat")
+            arrow = {"up": "▲", "down": "▼", "warn": "●"}.get(d, "•")
+            delta = f"<span class='ss-delta {esc(d)}'>{arrow} {esc(it['delta'])}</span> "
+        sub = it.get("sub", "")
+        sub_html = f"<div class='ss-kpi-s'>{delta}{esc(sub)}</div>" if (sub or delta) else ""
+        spark = sparkline(it.get("spark"))
+        cells.append(
+            f"<div class='ss-kpi{' has-spark' if spark else ''}'>{spark}"
+            f"<div class='ss-kpi-l'>{esc(it['label'])}</div>"
+            f"<div class='ss-kpi-v'>{esc(it['value'])}</div>{sub_html}</div>")
+    render("<div class='ss-kpis'>" + "".join(cells) + "</div>")
+
+
+def _segments(win: dict, home_color: str = "var(--accent)") -> list:
+    segs = [(win.get("home") or 0.0, home_color, "Local")]
+    if win.get("draw") is not None:
+        segs.append((win["draw"], DRAW_COLOR, "Empate"))
+    segs.append((win.get("away") or 0.0, AWAY_COLOR, "Visitante"))
+    return segs
+
+
+def prob_bar(win: dict, label: str = "Probabilidad de cada resultado") -> str:
+    segs = _segments(win)
+    total = sum(p for p, _, _ in segs) or 1.0
+    spans = "".join(
+        f"<span style='flex:{max(p / total, 0.0):.4f} 1 0;background:{c}' "
+        f"title='{esc(n)}: {fmt_pct(p / total)}'></span>" for p, c, n in segs)
+    aria = ", ".join(f"{n} {fmt_pct(p / total)}" for p, _, n in segs)
+    return f"<div class='ss-bar' role='img' aria-label='{esc(label)}: {esc(aria)}'>{spans}</div>"
+
+
+def _crest(url: str) -> str:
+    url = safe_url(url)
+    return f"<img class='ss-crest' src='{esc(url)}' alt='' loading='lazy' referrerpolicy='no-referrer'>" if url else ""
+
+
+def scorebug(fc, meta_left: str = "", meta_right: str = "", crests=("", ""),
+             roles=("Local", "Visitante")) -> None:
+    win = fc.win
+    unit = fc.expected.get("unit", "")
+    ph, pd_, pa = win.get("home", 0.0), win.get("draw"), win.get("away", 0.0)
+
+    def side(name, p, role, crest, css, color):
+        return (f"<div class='ss-side {css}'>{_crest(crest)}"
+                f"<div class='ss-name'>{esc(name)}</div>"
+                f"<div class='ss-role'><span class='ss-dot' style='background:{color}'></span>"
+                f"{esc(role)}</div>"
+                f"<div class='ss-big'>{p * 100:.0f}<small>%</small></div></div>")
+
+    if pd_ is not None:
+        mid = (f"<div class='ss-mid'><span class='ss-vs'>VS</span>"
+               f"<div class='ss-draw'>{pd_ * 100:.0f}<small style='font-size:.5em'>%</small></div>"
+               f"<div class='ss-draw-l'><span class='ss-dot' style='background:{DRAW_COLOR};"
+               f"margin-right:5px'></span>Empate</div></div>")
     else:
-        word = (
-            f"<span style=\"font-family:'IBM Plex Sans',sans-serif;font-weight:600;color:#fff;"
-            f"font-size:{fs:.2f}rem;letter-spacing:.14em;\">SPORT "
-            "<span style='font-weight:400;color:var(--muted);'>STATISTICS</span></span>"
-        )
-    return f"<div style='display:flex;align-items:center;gap:12px;'>{mark}{word}</div>"
+        mid = "<div class='ss-mid'><span class='ss-vs'>VS</span></div>"
 
+    exp = fc.expected
+    exp_items = []
+    if unit in ("goles", "puntos", "carreras"):
+        label = {"goles": "Goles esperados", "puntos": "Puntos esperados",
+                 "carreras": "Carreras esperadas"}[unit]
+        d = 2 if unit != "puntos" else 1
+        exp_items.append(f"<span>{esc(label)}<b>{fmt_num(exp['home'], d)} – {fmt_num(exp['away'], d)}</b></span>")
+        exp_items.append(f"<span>Total<b>{fmt_num(exp['home'] + exp['away'], d)}</b></span>")
+        if unit == "puntos":
+            exp_items.append(f"<span>Margen local<b>{exp['home'] - exp['away']:+.1f}</b></span>")
+    elif unit == "P(set)":
+        exp_items.append(f"<span>Prob. de ganar un set<b>{fmt_pct(exp['home'])}</b></span>")
 
-def onboarding_banner(key: str = "ss_onboarded") -> None:
-    """Banner de bienvenida (3 puntos), descartable y solo en la primera visita."""
-    if st.session_state.get(key):
-        return
-    points = [
-        ("chart", "Qué es", "Análisis estadístico de eventos deportivos con un modelo "
-                            "matemático propio (fútbol, baloncesto, béisbol y tenis)."),
-        ("alert", "Qué NO es", "No es una casa de apuestas ni consejo de apuestas. Las "
-                               "probabilidades son estimaciones con incertidumbre."),
-        ("list", "Cómo leerlo", "Las «situaciones más probables» son los mercados que el "
-                                "modelo considera más probables, ordenados de mayor a menor."),
-    ]
-    rows = ""
-    for ic, title, text in points:
-        rows += (
-            "<div style='display:flex;gap:12px;align-items:flex-start;padding:9px 0;'>"
-            "<div style='display:flex;align-items:center;justify-content:center;width:30px;height:30px;"
-            "flex:none;border-radius:8px;background:rgba(var(--accent-rgb),0.12);'>"
-            f"{icon(ic, 15, 'var(--accent)')}</div>"
-            f"<div><span style='color:#fff;font-weight:600;font-size:.9rem;'>{title}.</span> "
-            f"<span style='color:var(--muted);font-size:.88rem;'>{html.escape(text)}</span></div></div>"
-        )
-    st.markdown(
-        "<div style='background:var(--card);border:1px solid rgba(var(--accent-rgb),0.25);"
-        f"border-radius:14px;padding:16px 20px;margin-bottom:12px;'>{rows}</div>",
-        unsafe_allow_html=True,
+    odds_mid = (f"<span class='ss-odds'>{fmt_odds(pd_)}</span>" if pd_ is not None else "<span></span>")
+    markup = (
+        "<section class='ss-bug' aria-label='Pronóstico del enfrentamiento'>"
+        f"<div class='ss-bug-meta'><span>{esc(meta_left)}</span><span>{esc(meta_right)}</span></div>"
+        "<div class='ss-bug-grid'>"
+        + side(fc.home, ph, roles[0], crests[0], "home", "var(--accent)")
+        + mid
+        + side(fc.away, pa, roles[1], crests[1], "away", AWAY_COLOR)
+        + "</div>"
+        + prob_bar(win)
+        + "<div class='ss-bug-foot'>"
+        f"<div>Cuota justa <span class='ss-odds'>{fmt_odds(ph)}</span></div>"
+        f"<div style='text-align:center'>{odds_mid}</div>"
+        f"<div class='r'>Cuota justa <span class='ss-odds'>{fmt_odds(pa)}</span></div>"
+        "</div>"
+        + (f"<div class='ss-exp'>{''.join(exp_items)}</div>" if exp_items else "")
+        + "</section>"
     )
-    if st.button("Entendido, empezar", type="primary", key=key + "_btn"):
-        st.session_state[key] = True
-        st.rerun()
+    render(markup)
 
 
-def skeleton_rows(n: int = 10) -> str:
-    """HTML de un esqueleto de N filas (barra de situación) con shimmer. Carga percibida."""
-    row = ("<div style='display:flex;align-items:center;gap:12px;padding:9px 4px;'>"
-           "<span class='ss-skel' style='width:22px;height:22px;border-radius:6px'></span>"
-           "<span class='ss-skel' style='flex:1.2;height:12px'></span>"
-           "<span class='ss-skel' style='flex:1;height:6px'></span>"
-           "<span class='ss-skel' style='width:44px;height:12px'></span></div>")
-    return (f"<div style='background:var(--card);border:1px solid var(--border);"
-            f"border-radius:14px;padding:8px 16px'>{row * n}</div>")
+def situation_list(markets, n_label: bool = True) -> None:
+    if not markets:
+        empty_state("Sin situaciones", "No hay mercados que mostrar para este partido.", "info")
+        return
+    rows = []
+    for i, m in enumerate(markets, 1):
+        p = float(m["prob"])
+        grp = f"<div class='g'>{esc(m.get('grupo', ''))}</div>" if n_label else ""
+        name = esc(cap(m["mercado"]))
+        rows.append(
+            f"<div class='ss-li'><div class='ss-rank'>{i}</div>"
+            f"<div class='ss-li-name'><div class='n'>{name}</div>{grp}</div>"
+            f"<div class='ss-meter' role='progressbar' aria-valuemin='0' aria-valuemax='100' "
+            f"aria-valuenow='{p * 100:.0f}' aria-label='{name}'>"
+            f"<i style='width:{p * 100:.1f}%'></i><b></b></div>"
+            f"<div class='ss-li-p'><div class='p'>{fmt_pct(p)}</div>"
+            f"<div class='o'>@ {fmt_odds(p)}</div></div></div>")
+    render("<div class='ss-list'>" + "".join(rows) + "</div>")
+
+
+def market_groups(markets, query: str = "") -> int:
+    q = (query or "").strip().lower()
+    groups: dict = {}
+    for m in markets:
+        if q and q not in m["mercado"].lower() and q not in m.get("grupo", "").lower():
+            continue
+        groups.setdefault(m.get("grupo", "Otros"), []).append(m)
+    if not groups:
+        empty_state("Sin coincidencias", "Ningún mercado coincide con la búsqueda.", "search")
+        return 0
+    cards = []
+    shown = 0
+    for g, items in groups.items():
+        rows = []
+        for m in items:
+            p = float(m["prob"])
+            aprox = " <em>(aprox.)</em>" if m.get("aprox") else ""
+            rows.append(
+                f"<div class='ss-mrow'><div class='n'>{esc(cap(m['mercado']))}{aprox}</div>"
+                f"<div class='p'>{fmt_pct(p)}</div><div class='o'>{fmt_odds(p)}</div>"
+                f"<div class='m'><i style='width:{p * 100:.1f}%'></i></div></div>")
+            shown += 1
+        cards.append(f"<div class='ss-group'><h3>{esc(g)}<span>prob · cuota</span></h3>{''.join(rows)}</div>")
+    render("<div class='ss-groups'>" + "".join(cards) + "</div>")
+    return shown
+
+
+def compare_rows(rows, home_color: str = "var(--accent)") -> None:
+    out = []
+    for label, hv, av, fmt, _ in rows:
+        try:
+            h, a = float(hv), float(av)
+            tot = abs(h) + abs(a)
+            share = (abs(h) / tot) if tot else 0.5
+        except (TypeError, ValueError):
+            share = 0.5
+        split = (f"<div class='split'><span style='flex:{share:.3f} 1 0;background:{home_color}'></span>"
+                 f"<span style='flex:{1 - share:.3f} 1 0;background:{AWAY_COLOR}'></span></div>")
+        out.append(
+            f"<div class='ss-cmp-row'><div class='v'>{esc(fmt(hv))}</div>"
+            f"<div class='c'><div class='l'>{esc(label)}</div>{split}</div>"
+            f"<div class='v r'>{esc(fmt(av))}</div></div>")
+    render("<div class='ss-cmp'>" + "".join(out) + "</div>")
+
+
+def form_chips(results) -> str:
+    names = {"G": "Ganado", "E": "Empatado", "P": "Perdido"}
+    return ("<span class='ss-form'>" + "".join(
+        f"<span class='{esc(r)}' title='{esc(names.get(r, r))}'>{esc(r)}</span>" for r in results)
+        + "</span>")
+
+
+def team_card(name: str, color: str, stats, form=None, extra: str = "") -> None:
+    stat_html = "".join(f"<div class='ss-stat'><div class='l'>{esc(l)}</div>"
+                        f"<div class='v'>{esc(v)}</div></div>" for l, v in stats)
+    form_html = form_chips(form) if form else ""
+    render(f"<div class='ss-team'><div class='ss-team-h'><div class='t'>"
+           f"<span class='ss-dot' style='background:{esc(color)}'></span>{esc(name)}</div>{form_html}</div>"
+           f"<div class='ss-stats'>{stat_html}</div>{extra}</div>")
+
+
+def table(columns, rows, lead: int = 0, caption: str = "") -> None:
+    head = "".join(f"<th class='{c}' scope='col'>{esc(t)}</th>" for t, c in columns)
+    body = []
+    for r in rows:
+        tds = []
+        for k, (cell, (title, cls)) in enumerate(zip(r, columns)):
+            klass = " ".join(x for x in (cls, "lead" if k == lead else "") if x)
+            tds.append(f"<td class='{klass}' data-label='{esc(title)}'>{cell}</td>")
+        body.append("<tr>" + "".join(tds) + "</tr>")
+    cap_html = f"<caption class='ss-sr'>{esc(caption)}</caption>" if caption else ""
+    render(f"<div class='ss-tablewrap'><table class='ss-table'>{cap_html}<thead><tr>{head}</tr></thead>"
+           f"<tbody>{''.join(body)}</tbody></table></div>")
+
+
+def _fx_row(name: str, logo: str, right: str) -> str:
+    logo = safe_url(logo)
+    img = f"<img src='{esc(logo)}' alt='' loading='lazy' referrerpolicy='no-referrer'>" if logo else "<span class='ph'></span>"
+    return f"<div class='ss-fx-row'>{img}<span class='tn'>{esc(name)}</span>{right}</div>"
+
+
+def _fx_right(score, idx: int, p) -> str:
+    if score:
+        return f"<span class='sc'>{esc(score[idx])}</span>"
+    if p is not None:
+        return f"<span class='tp'>{p * 100:.0f}%</span>"
+    return ""
+
+
+def fixture_card(f: dict, win: dict | None, time_label: str, status: tuple) -> None:
+    text, tone = status
+    win = win or {}
+    score = f.get("score")
+    rows = (_fx_row(f["home"], f.get("home_logo", ""), _fx_right(score, 0, win.get("home")))
+            + _fx_row(f["away"], f.get("away_logo", ""), _fx_right(score, 1, win.get("away"))))
+    bar = prob_bar(win, "Probabilidades del modelo") if win else ""
+    draw = f"Empate {fmt_pct(win['draw'], 0)}" if win.get("draw") is not None else ""
+    source = "Modelo" if win else "Sin datos del modelo"
+    live = " live" if tone == "live" else ""
+    render(f"<article class='ss-fx{live}'>"
+           f"<div class='ss-fx-top'><span class='time'>{esc(time_label)}</span>"
+           f"{pill(text, tone) if text else ''}</div>{rows}{bar}"
+           f"<div class='ss-fx-foot'><span>{esc(draw)}</span><span>{source}</span></div></article>")
+
+
+def sport_tile(sport: str, title: str, desc: str, facts) -> None:
+    meta = SPORTS[sport]
+    facts_html = "".join(f"<span>{esc(k)} <b>{esc(v)}</b></span>" for k, v in facts)
+    render(f"<div class='ss-sport' style='--c:{meta['rgb']}'><div class='k'>{esc(meta['short'])}</div>"
+           f"<div class='t'>{esc(title)}</div><div class='d'>{esc(desc)}</div>"
+           f"<div class='f'>{facts_html}</div></div>")
+
+
+def sport_option(sport: str) -> str:
+    m = SPORTS.get(sport)
+    return f"{m['icon']} {m['label']}" if m else str(sport)
+
+
+def gap_cell(gap_pp: float, span: float = 12.0) -> str:
+    a = abs(gap_pp)
+    color = "var(--bad)"
+    if a <= 3:
+        color = "var(--good)"
+    elif a <= 7:
+        color = "var(--warn)"
+    frac = min(a / span, 1.0) * 50.0
+    pos = f"left:50%;width:{frac:.1f}%" if gap_pp >= 0 else f"right:50%;width:{frac:.1f}%"
+    return (f"<div class='ss-gap'><span class='v'>{gap_pp:+.1f} pp</span>"
+            f"<span class='t'><i style='{pos};background:{color}'></i><b></b></span></div>")
+
+
+_MARKS = {True: ("h", "✓", "Acierto"), False: ("x", "✗", "Fallo"), None: ("p", "•", "Pendiente")}
+
+
+def _summary_card(m: dict) -> str:
+    main_hit = m["main"]["hit"]
+    state = {True: " ok", False: " ko"}.get(main_hit, "")
+    sport = SPORTS.get(m["sport"], {}).get("short", m["sport"])
+    score = f"<b>{esc(m['score'].replace('-', '–'))}</b>" if m.get("score") else " vs "
+    rate = (f"{m['hits']}<small>/{m['resolved']}</small>" if m["resolved"]
+            else "<small>pendiente</small>")
+    items = []
+    for k, it in enumerate(m["items"]):
+        css, mark, label = _MARKS[it["hit"]]
+        main = " main" if k == 0 else ""
+        items.append(f"<li class='{css}{main}'><span class='i' aria-hidden='true'>{mark}</span>"
+                     f"<span class='n'><span class='ss-sr'>{label}: </span>{esc(cap(it['mercado']))}</span>"
+                     f"<span class='pr'>{fmt_pct(it['prob'], 0)}</span></li>")
+    return (f"<article class='ss-sum{state}'><div class='ss-sum-h'><div>"
+            f"<div class='s'>{esc(sport)} · pick principal "
+            f"{ {True: 'acertado', False: 'fallado'}.get(main_hit, 'pendiente') }</div>"
+            f"<div class='m'>{esc(m['home'])}{score}{esc(m['away'])}</div></div>"
+            f"<div class='ss-sum-rate'>{rate}</div></div><ul>{''.join(items)}</ul></article>")
+
+
+def summary_cards(matches) -> None:
+    render("<div class='ss-sums'>" + "".join(_summary_card(m) for m in matches) + "</div>")
+
+
+def result_pill(hit) -> str:
+    return pill("Acierto", "good") if bool(hit) else pill("Fallo", "bad")
+
+
+def footer() -> None:
+    render("<footer class='ss-foot'><span>SportStatistics · probabilidades calibradas, no consejos "
+           "de apuesta. Un favorito del 75 % pierde 1 de cada 4 veces.</span>"
+           "<span>Modelos v2 · evaluados fuera de muestra</span></footer>")
 
 
 def browser_tz():
-    """Zona horaria del navegador (IANA) o None. Usa st.context (Streamlit ≥1.35)."""
     try:
         return st.context.timezone
     except Exception:
@@ -435,15 +823,15 @@ def browser_tz():
 
 
 def local_hm(utc_iso, tz=None):
-    """(hora 'HH:MM', etiqueta_zona) desde un ISO en UTC. Cae a UTC si no hay zona/dato."""
-    from datetime import datetime
     s = str(utc_iso or "")
     if len(s) < 16:
         return "", ""
     try:
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except Exception:
+    except ValueError:
         return s[11:16], "UTC"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     if tz:
         try:
             from zoneinfo import ZoneInfo
@@ -454,229 +842,31 @@ def local_hm(utc_iso, tz=None):
     return dt.strftime("%H:%M"), "UTC"
 
 
-def render_freshness(max_hours: int = 48) -> None:
-    """Avisa si los datos están desactualizados (last_refresh > max_hours). Best-effort."""
-    from datetime import datetime, timezone
+def status_of(status) -> tuple:
+    s = str(status or "").upper()
+    if any(k in s for k in ("IN_PLAY", "PROGRESS", "LIVE", "PAUSED", "MANAGER CHALLENGE")):
+        return "En vivo", "live"
+    if any(k in s for k in ("FINISH", "FINAL", "COMPLET", "GAME OVER", "AWARDED")):
+        return "Final", "neutral"
+    if any(k in s for k in ("POSTPON", "CANCEL", "SUSPEND")):
+        return "Aplazado", "warn"
+    if "DELAY" in s:
+        return "Retrasado", "warn"
+    return "", "neutral"
+
+
+def freshness(last_refresh: str | None, max_hours: int = 48):
+    if not last_refresh:
+        return None
     try:
-        from core.database.meta import get_meta
-        raw = get_meta("last_refresh")
-        if not raw:
-            return
-        ts = datetime.strptime(str(raw).replace(" UTC", ""), "%Y-%m-%d %H:%M")
-        ts = ts.replace(tzinfo=timezone.utc)
-        age_h = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
-    except Exception:
-        return
-    if age_h > max_hours:
-        st.warning(
-            f"Datos desactualizados: última actualización hace {age_h / 24:.1f} días "
-            f"({raw}). El refresco automático pudo fallar; revisa el cron.",
-            icon=":material/warning:",
-        )
-
-
-def sidebar_nav() -> None:
-    """Navegación de marca en el sidebar (reemplaza el nav automático de Streamlit,
-    que mostraba «streamlit app»). Nombres e iconos limpios."""
-    st.sidebar.page_link("streamlit_app.py", label="Dashboard", icon=":material/trophy:")
-    st.sidebar.page_link("pages/1_Analizador_de_Partido.py", label="Analizador",
-                         icon=":material/query_stats:")
-    st.sidebar.page_link("pages/3_Partidos_del_dia.py", label="Partidos del día",
-                         icon=":material/today:")
-    st.sidebar.page_link("pages/2_Historial.py", label="Historial",
-                         icon=":material/history:")
-
-
-def page_header(title: str, subtitle: str = "", icon_name: str = "chart") -> None:
-    """Cabecera de página: icono en cuadro de acento + título + subtítulo (mockups).
-
-    Usa clases (ss-ph*) para poder encogerse en móvil vía media query (ver _THEME_CSS).
-    """
-    sub = (f"<div style='color:var(--muted);font-size:.9rem;margin-top:3px;'>"
-           f"{html.escape(str(subtitle))}</div>") if subtitle else ""
-    st.markdown(
-        "<div class='ss-ph' style='display:flex;align-items:center;gap:14px;margin:2px 0 20px;'>"
-        "<div class='ss-ph-ico' style='display:flex;align-items:center;justify-content:center;"
-        "width:44px;height:44px;border-radius:11px;background:rgba(var(--accent-rgb),0.12);"
-        f"border:1px solid rgba(var(--accent-rgb),0.25);'>{icon(icon_name, 22, 'var(--accent)')}</div>"
-        f"<div><div class='ss-ph-title' style=\"font-family:'IBM Plex Sans',sans-serif;"
-        f"font-size:1.5rem;font-weight:600;color:#fff;line-height:1.15;\">{html.escape(str(title))}</div>"
-        f"{sub}</div></div>",
-        unsafe_allow_html=True,
-    )
-
-
-def empty_state(title: str, detail: str = "", icon_name: str = "calendar") -> None:
-    """Estado vacío homologado (tarjeta con icono) — coherente en toda la app.
-
-    `detail` es texto de desarrollador (puede llevar HTML simple); `title` se escapa.
-    """
-    det = (f"<div style='color:var(--muted);font-size:.86rem;line-height:1.5;"
-           f"max-width:440px;margin:0 auto;'>{detail}</div>") if detail else ""
-    st.markdown(
-        "<div style='background:var(--card);border:1px solid var(--border);border-radius:14px;"
-        "padding:34px 20px;text-align:center;'>"
-        f"<div style='display:inline-flex;margin-bottom:12px;'>{icon(icon_name, 28, 'var(--muted)')}</div>"
-        f"<div style='color:#fff;font-weight:600;margin-bottom:6px;'>{html.escape(str(title))}</div>"
-        f"{det}</div>",
-        unsafe_allow_html=True,
-    )
-
-
-def sparkline(values, w: int = 94, h: int = 30, color: str = "var(--accent)") -> str:
-    """Mini-gráfico SVG (línea + área) para las tarjetas KPI. '' si hay <2 puntos."""
-    vals = [float(v) for v in values if v is not None]
-    if len(vals) < 2:
-        return ""
-    lo, hi = min(vals), max(vals)
-    rng = (hi - lo) or 1.0
-    n = len(vals)
-    pts = [((i / (n - 1)) * (w - 2) + 1, h - 3 - (v - lo) / rng * (h - 6))
-           for i, v in enumerate(vals)]
-    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
-    area = f"1,{h} " + line + f" {w - 1},{h}"
-    return (
-        f"<svg width='{w}' height='{h}' viewBox='0 0 {w} {h}' fill='none' style='flex:none'>"
-        f"<polygon points='{area}' fill='{color}' opacity='0.12'/>"
-        f"<polyline points='{line}' fill='none' stroke='{color}' stroke-width='1.6' "
-        f"stroke-linecap='round' stroke-linejoin='round'/></svg>"
-    )
-
-
-def kpi_card(label: str, value: str, icon_name: str = "activity",
-             sub: str = "", spark=None) -> None:
-    """Tarjeta KPI (mockup): icono en cuadro + etiqueta + valor mono grande + sparkline."""
-    spark_html = sparkline(spark) if spark else ""
-    sub_html = (f"<div style='color:var(--muted);font-size:.75rem;margin-top:7px;'>"
-                f"{html.escape(str(sub))}</div>") if sub else ""
-    st.markdown(
-        "<div style='background:var(--card);border:1px solid var(--border);border-radius:14px;"
-        "padding:16px 18px;box-shadow:0 1px 2px rgba(0,0,0,.25);'>"
-        "<div style='display:flex;align-items:center;gap:9px;margin-bottom:12px;'>"
-        "<div style='display:flex;align-items:center;justify-content:center;width:30px;height:30px;"
-        f"border-radius:8px;background:rgba(var(--accent-rgb),0.12);'>{icon(icon_name, 16, 'var(--accent)')}</div>"
-        "<span style='color:var(--muted);font-size:.72rem;font-weight:500;text-transform:uppercase;"
-        f"letter-spacing:.06em;'>{html.escape(str(label))}</span></div>"
-        "<div style='display:flex;align-items:flex-end;justify-content:space-between;gap:10px;'>"
-        f"<div><div style=\"font-family:'IBM Plex Mono',monospace;font-size:1.85rem;font-weight:600;"
-        f"color:#fff;line-height:1;\">{html.escape(str(value))}</div>{sub_html}</div>"
-        f"{spark_html}</div></div>",
-        unsafe_allow_html=True,
-    )
-
-
-def pill(text: str, kind: str = "neutral", icon_name: str = None, dot: bool = False) -> str:
-    """Chip de estado (Acierto/Fallo, +9.4 pp, Ganador…). Devuelve HTML.
-
-    kind: 'pos' (verde) | 'neg' (rojo) | 'neutral' | 'accent'. Opcional icono o punto.
-    """
-    rgb, fg = _PILL_COLORS.get(kind, _PILL_COLORS["neutral"])
-    lead = ""
-    if icon_name:
-        lead = icon(icon_name, 13, fg, 2.2)
-    elif dot:
-        lead = (f"<span style='width:7px;height:7px;border-radius:50%;background:{fg};"
-                f"flex:none'></span>")
-    return (
-        f"<span style='display:inline-flex;align-items:center;gap:5px;padding:3px 9px;"
-        f"border-radius:20px;background:rgba({rgb},0.14);color:{fg};font-size:.75rem;"
-        f"font-weight:500;white-space:nowrap;'>{lead}{html.escape(str(text))}</span>"
-    )
-
-
-def calibration_bar(value_pp: float, span: float = 15.0) -> str:
-    """Barra divergente de calibración (mockup): chip con el valor + barra L/R desde el centro.
-
-    value_pp > 0 (el modelo acierta más de lo prometido) -> verde a la derecha;
-    < 0 (optimista) -> rojo a la izquierda. `span` = tope visual en puntos porcentuales.
-    """
-    kind = "pos" if value_pp >= 0 else "neg"
-    _, fg = _PILL_COLORS[kind]
-    frac = min(abs(value_pp) / span, 1.0) * 50.0   # % del semiancho
-    if value_pp >= 0:
-        fill = f"left:50%;width:{frac:.0f}%;"
+        ts = datetime.strptime(str(last_refresh).replace(" UTC", ""), "%Y-%m-%d %H:%M")
+        age_h = (datetime.now(timezone.utc) - ts.replace(tzinfo=timezone.utc)).total_seconds() / 3600
+    except ValueError:
+        return None
+    if age_h < 1:
+        txt = "Datos actualizados hace menos de 1 h"
+    elif age_h < 48:
+        txt = f"Datos actualizados hace {age_h:.0f} h"
     else:
-        fill = f"right:50%;width:{frac:.0f}%;"
-    return (
-        "<div style='display:flex;align-items:center;gap:10px;'>"
-        f"<span style='font-family:\"IBM Plex Mono\",monospace;font-size:.75rem;font-weight:600;"
-        f"color:{fg};width:54px;text-align:right;'>{value_pp:+.1f}%</span>"
-        "<div style='position:relative;flex:1;height:6px;background:rgba(255,255,255,0.05);"
-        "border-radius:99px;min-width:70px;'>"
-        "<div style='position:absolute;left:50%;top:-2px;width:2px;height:10px;"
-        "background:rgba(255,255,255,0.5);transform:translateX(-1px);'></div>"
-        f"<div style='position:absolute;top:0;{fill}height:100%;background:{fg};"
-        "border-radius:99px;'></div></div></div>"
-    )
-
-
-def render_hero(title: str, subtitle: str = "", badge: str = "") -> None:
-    """Cabecera de marca para la portada (mate). Texto estático → se escapa igual."""
-    badge_html = (
-        f"<div style='display:inline-flex;align-items:center;gap:6px;margin-top:14px;"
-        f"padding:5px 12px;border-radius:6px;background:rgba(var(--accent-rgb),0.10);"
-        f"border:1px solid rgba(var(--accent-rgb),0.25);color:var(--accent);"
-        f"font-family:IBM Plex Mono,monospace;font-size:12px;font-weight:500;'>"
-        f"{icon('activity', 13, 'var(--accent)')}<span>{html.escape(str(badge))}</span></div>"
-    ) if badge else ""
-    st.markdown(
-        f"""
-        <div style="position:relative;overflow:hidden;border-radius:16px;padding:32px 28px;margin:2px 0 22px;
-                    background:var(--card);border:1px solid var(--border);">
-          <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);"></div>
-          <div style="font-family:'IBM Plex Sans',sans-serif;font-size:2.1rem;font-weight:600;
-                      color:#fff;line-height:1.15;letter-spacing:-.01em;">{html.escape(str(title))}</div>
-          <div style="margin-top:.5rem;color:var(--muted);font-size:1rem;max-width:640px;">
-              {html.escape(str(subtitle))}</div>
-          {badge_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _crest(logo: str) -> str:
-    """<img> del escudo (o vacío). Alt vacío: es decorativo (el nombre ya está al lado)."""
-    if not logo:
-        return ""
-    return (f"<img src='{html.escape(str(logo))}' alt='' loading='lazy' "
-            f"style='width:44px;height:44px;object-fit:contain;margin-bottom:9px;'>")
-
-
-def matchup_header(home, away, accent: str = "#5c9a85",
-                   accent_rgb: str = "92, 154, 133", subtitle: str = "",
-                   home_logo: str = "", away_logo: str = "") -> None:
-    """Cabecera de enfrentamiento (H2H) mate, con escudos opcionales.
-
-    Nombres de BD/feed → escapados (XSS-safe). Los logos son URLs del feed (MLB/fútbol).
-    """
-    sub = (
-        f"<div style='position:relative;margin-top:14px;color:var(--muted);font-size:12px;"
-        f"letter-spacing:.06em;text-transform:uppercase;'>{html.escape(str(subtitle))}</div>"
-    ) if subtitle else ""
-
-    def side(name, logo):
-        return (
-            "<div style='flex:1;display:flex;flex-direction:column;align-items:center;min-width:0;'>"
-            f"{_crest(logo)}<span style=\"font-family:'IBM Plex Sans',sans-serif;font-size:19px;"
-            f"font-weight:600;color:#fff;text-align:center;line-height:1.2;\">{html.escape(str(name))}</span></div>"
-        )
-
-    st.markdown(
-        f"""
-        <div role="group" aria-label="{html.escape(str(home))} contra {html.escape(str(away))}"
-             style="position:relative;overflow:hidden;border-radius:14px;padding:22px 20px;margin-bottom:20px;
-                    text-align:center;background:var(--card);border:1px solid rgba({accent_rgb},0.18);">
-          <div style="position:absolute;left:0;right:0;top:0;height:2px;background:rgba({accent_rgb},0.55);"></div>
-          <div style="display:flex;justify-content:center;align-items:center;gap:16px;max-width:640px;margin:0 auto;">
-            {side(home, home_logo)}
-            <div style="font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:12px;letter-spacing:.05em;
-                 background:rgba({accent_rgb},0.12);border:1px solid rgba({accent_rgb},0.30);color:{accent};
-                 padding:5px 12px;border-radius:6px;flex:none;">VS</div>
-            {side(away, away_logo)}
-          </div>
-          {sub}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        txt = f"Datos de hace {age_h / 24:.0f} días"
+    return txt, ("good" if age_h <= max_hours else "warn")
