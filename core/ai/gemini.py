@@ -1,16 +1,3 @@
-"""
-Cliente de Gemini (Google AI Studio) con BÚSQUEDA WEB (grounding).
-
-Aporta CONTEXTO cualitativo actual (bajas, lesiones, sanciones) para un partido.
-NO produce probabilidades: el modelo matemático sigue calculando el número; este
-contexto solo ajusta la fuerza de los equipos (ver core/ai/adjust.py).
-
-- Sin dependencias nuevas: usa urllib (stdlib).
-- La clave se lee de st.secrets["gemini_api_key"] o de GEMINI_API_KEY.
-- Si no hay clave -> is_enabled() = False y la función no hace nada (degradación limpia).
-- Cualquier error de red/cuota/parseo -> devuelve None (nunca rompe la app).
-- El grounding (google_search) hace que use datos ACTUALES, evitando alucinaciones.
-"""
 import json
 import os
 import urllib.error
@@ -21,7 +8,6 @@ _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:gen
 
 _VALID_IMPACT = ("none", "low", "medium", "high", "unknown")
 
-# Intro específico por deporte (qué contexto buscar).
 _INTRO = {
     "football": 'Para el partido de futbol "{home}" (local) vs "{away}" (visitante) en "{league}", '
                 'indica las BAJAS CONFIRMADAS (lesiones o sanciones) de jugadores IMPORTANTES de cada '
@@ -36,7 +22,6 @@ _INTRO = {
               'recientes, fatiga acumulada o retiros recientes de cada jugador y el impacto en su nivel.',
 }
 
-# Formato de salida + reglas (común a todos los deportes).
 _FORMAT = """
 
 Responde SOLO con JSON valido, sin texto adicional ni markdown, con este formato exacto:
@@ -69,7 +54,6 @@ def _secret(key: str):
 
 
 def is_enabled() -> bool:
-    """True si hay clave de Gemini configurada."""
     return bool(_secret("gemini_api_key"))
 
 
@@ -79,17 +63,13 @@ def _model() -> str:
 
 def match_context(home: str, away: str, sport: str = "football",
                   league: str = "", timeout: int = 25):
-    """Devuelve {'home': {...}, 'away': {...}} con el contexto, o None si no disponible.
-
-    `sport` ∈ {football, basketball, baseball, tennis}. En tenis, home=jugador 1.
-    """
     key = _secret("gemini_api_key")
     if not key:
         return None
 
     body = {
         "contents": [{"parts": [{"text": _build_prompt(home, away, sport, league)}]}],
-        "tools": [{"google_search": {}}],          # grounding -> datos actuales
+        "tools": [{"google_search": {}}],
         "generationConfig": {"temperature": 0.2},
     }
     url = _ENDPOINT.format(model=_model()) + f"?key={key}"
@@ -106,7 +86,6 @@ def match_context(home: str, away: str, sport: str = "football",
 
 
 def _extract_json(text: str):
-    """Saca el objeto JSON del texto (puede venir con ```json ... ``` o texto extra)."""
     text = text.strip()
     if "```" in text:
         text = text.split("```")[1] if text.count("```") >= 2 else text
@@ -137,7 +116,6 @@ def _norm_side(d) -> dict:
 
 
 def parse_response(data) -> dict | None:
-    """Normaliza la respuesta de Gemini a {'home': {...}, 'away': {...}}."""
     try:
         text = data["candidates"][0]["content"]["parts"][0]["text"]
     except (KeyError, IndexError, TypeError):
