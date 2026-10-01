@@ -1,34 +1,9 @@
-# ============================================================
-# SportStatistics — Dependencias de la APP en la nube (ligeras)
-# ============================================================
-# Este archivo es el que usa Streamlit Community Cloud al desplegar.
-# Contiene SOLO lo que la app necesita en runtime para servir el dashboard
-# (paginas streamlit_app.py + Analizador). NO incluye las librerias pesadas
-# de ingesta/entrenamiento (nba_api, pybaseball, xgboost, lightgbm, statsmodels,
-# scikit-learn), que estan aisladas en los scripts y no se importan al render.
-#
-# VERSIONES FIJADAS (==) para un despliegue REPRODUCIBLE: la nube reinstala
-# exactamente estas versiones cada vez, evitando que una actualizacion automatica
-# rompa la app en el futuro. Son las validadas por la suite de tests.
-# (Si algun dia quieres parches de seguridad automaticos, cambia == por ~=.)
-#
-# Para DESARROLLO LOCAL completo (descargas, entrenamiento, backtests) usa:
-#   pip install -r requirements-dev.txt
-# ============================================================
-
-# Núcleo de datos
+# Dependencias de la app (Streamlit Cloud). Versiones fijadas para despliegues reproducibles.
 pandas==3.0.2
 numpy==2.4.4
 scipy==1.17.1
-
-# Base de datos (PostgreSQL)
 sqlalchemy==2.0.49
 psycopg2-binary==2.9.12
 python-dotenv==1.2.2
-
-# App
 streamlit==1.56.0
-joblib==1.5.3
-
-# Gráficos premium
 plotly==6.7.0

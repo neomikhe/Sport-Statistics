@@ -1,4 +1,3 @@
-"""Hace importables core/ y sports/ desde los tests sin instalar el paquete."""
 import sys
 from pathlib import Path
 
