@@ -1,0 +1,96 @@
+{
+  "generated": "30/09/2026",
+  "rows": [
+    {
+      "sport": "football",
+      "metric": "Log-loss 1X2",
+      "sample": "7.565 partidos 2025-26 · 26 ligas",
+      "v1": 1.0172,
+      "v2": 1.013
+    },
+    {
+      "sport": "football",
+      "metric": "Log-loss Over/Under 2.5",
+      "sample": "7.565 partidos 2025-26 · 26 ligas",
+      "v1": 0.6838,
+      "v2": 0.6809
+    },
+    {
+      "sport": "football",
+      "metric": "Log-loss ambos marcan",
+      "sample": "7.565 partidos 2025-26 · 26 ligas",
+      "v1": 0.6876,
+      "v2": 0.6859
+    },
+    {
+      "sport": "basketball",
+      "metric": "Log-loss ganador",
+      "sample": "3.874 partidos 2023-26",
+      "v1": 0.6115,
+      "v2": 0.6088
+    },
+    {
+      "sport": "basketball",
+      "metric": "NLL total de puntos",
+      "sample": "3.874 partidos 2023-26",
+      "v1": 4.5258,
+      "v2": 4.3416
+    },
+    {
+      "sport": "basketball",
+      "metric": "NLL margen",
+      "sample": "3.874 partidos 2023-26",
+      "v1": 4.0922,
+      "v2": 4.083
+    },
+    {
+      "sport": "baseball",
+      "metric": "Log-loss ganador",
+      "sample": "7.156 partidos 2022-24",
+      "v1": 0.7222,
+      "v2": 0.6779
+    },
+    {
+      "sport": "baseball",
+      "metric": "NLL total de carreras",
+      "sample": "7.156 partidos 2022-24",
+      "v1": 2.9895,
+      "v2": 2.8528
+    },
+    {
+      "sport": "baseball",
+      "metric": "Log-loss run line −1.5",
+      "sample": "7.156 partidos 2022-24",
+      "v1": 0.6809,
+      "v2": 0.6391
+    },
+    {
+      "sport": "baseball",
+      "metric": "Log-loss Over/Under 8.5",
+      "sample": "7.156 partidos 2022-24",
+      "v1": 0.736,
+      "v2": 0.691
+    },
+    {
+      "sport": "tennis",
+      "metric": "Log-loss ganador",
+      "sample": "11.561 partidos 2023-24",
+      "v1": 0.6377,
+      "v2": 0.6275
+    },
+    {
+      "sport": "tennis",
+      "metric": "Brier ganador",
+      "sample": "11.561 partidos 2023-24",
+      "v1": 0.2241,
+      "v2": 0.2195
+    },
+    {
+      "sport": "tennis",
+      "metric": "Log-loss ganador (Grand Slam BO5)",
+      "sample": "1.046 partidos",
+      "v1": 0.5731,
+      "v2": 0.5515
+    }
+  ]
+}
