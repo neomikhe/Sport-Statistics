@@ -1,21 +1,20 @@
-name: refresh-data
+name: daily-summary
 
 on:
   schedule:
-    - cron: "0 23 * * *"   # 23:00 UTC
+    - cron: "0 6 * * *"   # 23:00 hora del Pacífico (UTC-7)
   workflow_dispatch: {}
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
-  group: refresh-data
+  group: daily-summary
   cancel-in-progress: false
 
 jobs:
-  refresh:
+  summary:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,25 +37,16 @@ jobs:
                   print(f"::add-mask::{v}")
           PY
 
-      - name: Instalar dependencias del pipeline
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas numpy scipy sqlalchemy psycopg2-binary \
-            python-dotenv requests beautifulsoup4 lxml
+      - name: Instalar dependencias
+        run: pip install --quiet pandas sqlalchemy psycopg2-binary python-dotenv
 
-      - name: Refrescar datos
+      - name: Resumen del día y keep-alive de la BD
         env:
           DATABASE_URL: ${{ secrets.DB_URL }}
           FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+          SUMMARY_TZ: America/Mazatlan
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo "Falta el secret DB_URL"; exit 1
           fi
-          python scripts/refresh_cloud.py
-
-      - name: Monitor de deriva del modelo
-        if: always()
-        continue-on-error: true
-        env:
-          DATABASE_URL: ${{ secrets.DB_URL }}
-        run: python scripts/monitor_drift.py
+          python scripts/daily_summary.py

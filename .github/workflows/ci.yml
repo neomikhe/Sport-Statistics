@@ -1,9 +1,5 @@
 name: ci
 
-# Verifica que nada se rompe en cada push/PR: compila todo el código y corre la
-# suite de tests. No toca la BD ni despliega; es una red de seguridad para que
-# ningún cambio futuro (tuyo o de un colaborador) rompa el proyecto en silencio.
-
 on:
   push:
     branches: [main]
@@ -31,15 +27,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest pandas numpy scipy scikit-learn joblib
 
-      - name: Compilación (chequeo de sintaxis de todo el repo)
+      - name: Compilación
         run: python -m compileall -q app core scripts sports tests
 
       - name: Tests
         run: python -m pytest -q
 
-      # Auditoría de vulnerabilidades de dependencias (informativa: no bloquea el
-      # merge si aparece un CVE transitivo sin parche, pero lo deja visible en el log).
-      - name: Auditoría de dependencias (pip-audit)
+      # Informativo: no bloquea si aparece un CVE sin parche.
+      - name: Auditoría de dependencias
         continue-on-error: true
         run: |
           pip install pip-audit
