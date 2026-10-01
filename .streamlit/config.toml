@@ -1,19 +1,91 @@
-# Configuracion de Streamlit segura para commitear (sin secretos).
-# NOTA: no fijamos server.address aqui. En la nube lo gestiona Streamlit Cloud;
-# en local el bind a 127.0.0.1 se pasa por flag (ver start.bat / DEPLOY.md).
+# Sin secretos: se puede publicar. En local: --server.address 127.0.0.1
 
 [client]
-# Seguridad: NO mostrar tracebacks/errores detallados al usuario (evita filtrar
-# rutas, consultas o estructura interna si salta una excepción). Para depurar en
-# local puedes lanzar con: streamlit run ... --client.showErrorDetails=true
 showErrorDetails = false
+toolbarMode = "minimal"
 
 [browser]
 gatherUsageStats = false
 
+[server]
+enableStaticServing = true
+enableXsrfProtection = true
+enableCORS = true
+maxUploadSize = 1
+
 [theme]
 base = "dark"
-primaryColor = "#10b981"
-backgroundColor = "#0b0f14"
-secondaryBackgroundColor = "#121821"
-textColor = "#e7ebf2"
+primaryColor = "#c5f24a"
+backgroundColor = "#07090d"
+secondaryBackgroundColor = "#111822"
+textColor = "#e9eef5"
+linkColor = "#c5f24a"
+linkUnderline = false
+borderColor = "#1f2935"
+dataframeBorderColor = "#19222d"
+dataframeHeaderBackgroundColor = "#0e141c"
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "10px"
+buttonRadius = "10px"
+baseFontSize = 15
+font = "Schibsted Grotesk, sans-serif"
+headingFont = "Big Shoulders Display, sans-serif"
+codeFont = "Geist Mono, monospace"
+headingFontWeights = [800, 700, 700, 600, 600, 600]
+greenColor = "#35c46a"
+redColor = "#e5484d"
+yellowColor = "#f5b83d"
+orangeColor = "#f0884a"
+blueColor = "#4d9cf8"
+violetColor = "#a58bf6"
+grayColor = "#8a95a8"
+# Paleta validada para daltonismo: fútbol, baloncesto, béisbol, tenis.
+chartCategoricalColors = ["#1fae78", "#e8662a", "#3f8cf0", "#e0569a"]
+
+# Fuentes servidas por la propia app (sin peticiones a Google).
+[[theme.fontFaces]]
+family = "Schibsted Grotesk"
+url = "app/static/fonts/schibsted-grotesk-latin-ext.woff2"
+weight = "400 700"
+style = "normal"
+unicodeRange = "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF"
+
+[[theme.fontFaces]]
+family = "Schibsted Grotesk"
+url = "app/static/fonts/schibsted-grotesk-latin.woff2"
+weight = "400 700"
+style = "normal"
+unicodeRange = "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD"
+
+[[theme.fontFaces]]
+family = "Big Shoulders Display"
+url = "app/static/fonts/big-shoulders-display-latin-ext.woff2"
+weight = "600 800"
+style = "normal"
+unicodeRange = "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF"
+
+[[theme.fontFaces]]
+family = "Big Shoulders Display"
+url = "app/static/fonts/big-shoulders-display-latin.woff2"
+weight = "600 800"
+style = "normal"
+unicodeRange = "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD"
+
+[[theme.fontFaces]]
+family = "Geist Mono"
+url = "app/static/fonts/geist-mono-latin-ext.woff2"
+weight = "400 600"
+style = "normal"
+unicodeRange = "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF"
+
+[[theme.fontFaces]]
+family = "Geist Mono"
+url = "app/static/fonts/geist-mono-latin.woff2"
+weight = "400 600"
+style = "normal"
+unicodeRange = "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD"
+
+[theme.sidebar]
+backgroundColor = "#0b0f15"
+secondaryBackgroundColor = "#111822"
