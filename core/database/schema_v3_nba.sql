@@ -1,0 +1,23 @@
+-- v3: columnas de box-score NBA (idempotente).
+
+ALTER TABLE basketball_games
+    ADD COLUMN IF NOT EXISTS home_fgm INT,
+    ADD COLUMN IF NOT EXISTS home_fga INT,
+    ADD COLUMN IF NOT EXISTS home_fg3m INT,
+    ADD COLUMN IF NOT EXISTS home_fg3a INT,
+    ADD COLUMN IF NOT EXISTS home_ftm INT,
+    ADD COLUMN IF NOT EXISTS home_fta INT,
+    ADD COLUMN IF NOT EXISTS home_oreb INT,
+    ADD COLUMN IF NOT EXISTS home_dreb INT,
+    ADD COLUMN IF NOT EXISTS home_tov INT,
+    ADD COLUMN IF NOT EXISTS home_ast INT,
+    ADD COLUMN IF NOT EXISTS away_fgm INT,
+    ADD COLUMN IF NOT EXISTS away_fga INT,
+    ADD COLUMN IF NOT EXISTS away_fg3m INT,
+    ADD COLUMN IF NOT EXISTS away_fg3a INT,
+    ADD COLUMN IF NOT EXISTS away_ftm INT,
+    ADD COLUMN IF NOT EXISTS away_fta INT,
+    ADD COLUMN IF NOT EXISTS away_oreb INT,
+    ADD COLUMN IF NOT EXISTS away_dreb INT,
+    ADD COLUMN IF NOT EXISTS away_tov INT,
+    ADD COLUMN IF NOT EXISTS away_ast INT;
